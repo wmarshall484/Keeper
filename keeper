@@ -1,0 +1,20 @@
+#!/bin/bash
+# Keeper CLI wrapper
+# This script converts relative paths to absolute and launches the Keeper app
+
+if [ $# -eq 0 ]; then
+    # No arguments - open with current directory
+    DIR="$(pwd)"
+elif [ -d "$1" ]; then
+    # Argument is a directory - convert to absolute path
+    DIR="$(cd "$1" && pwd)"
+elif [ -d "$(pwd)/$1" ]; then
+    # Argument is relative path - convert to absolute
+    DIR="$(cd "$(pwd)/$1" && pwd)"
+else
+    echo "Error: Directory '$1' not found"
+    exit 1
+fi
+
+# Launch the app with absolute path
+open -a Keeper --args "$DIR"
