@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getFiles: (dirPath) => ipcRenderer.invoke('get-files', dirPath),
   navigateTo: (newPath) => ipcRenderer.send('navigate-to', newPath),
   onDirectoryChanged: (callback) => ipcRenderer.on('directory-changed', (event, ...args) => callback(...args)),
+  onStatsProgress: (callback) => ipcRenderer.on('stats-progress', (event, ...args) => callback(...args)),
   getAllOwners: () => ipcRenderer.invoke('get-all-owners'),
   assignOwner: (filePath, owner, isDirectory) => ipcRenderer.invoke('assign-owner', filePath, owner, isDirectory),
   removeOwner: (filePath, isDirectory) => ipcRenderer.invoke('remove-owner', filePath, isDirectory),

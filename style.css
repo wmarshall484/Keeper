@@ -84,6 +84,9 @@ html, body {
 
 .view-options {
     margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
 }
 
 #up-button {
@@ -93,10 +96,21 @@ html, body {
     padding: 10px 15px;
     cursor: pointer;
     transition: background-color 0.2s;
+    flex-shrink: 0;
 }
 
 #up-button:hover {
     background-color: #ddd;
+}
+
+#current-path {
+    font-size: 14px;
+    color: #666;
+    font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex-grow: 1;
 }
 
 #file-list-header {
@@ -113,9 +127,9 @@ html, body {
 }
 
 .owner-header {
-    width: 150px; /* Adjust as needed */
     text-align: right;
     padding-right: 10px;
+    box-sizing: border-box;
 }
 
 #file-list {
@@ -129,7 +143,7 @@ html, body {
 
 .file-item {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     background-color: #fff;
     border: 1px solid #ddd;
     border-radius: 5px;
@@ -161,26 +175,84 @@ html, body {
 }
 
 .file-item .owner {
-    width: 150px; /* Should match owner-header width */
-    text-align: right;
     padding-right: 10px;
     color: #333;
+    display: flex;
+    justify-content: flex-start;
+    gap: 4px;
+    flex-wrap: wrap; /* Allow tags to wrap to the next line */
+    box-sizing: border-box;
+}
+
+.owner-tag {
+    background-color: #e8e8e8;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .file-item .owner.unset {
     color: #bbb;
+    font-style: italic;
+    justify-content: flex-end;
+    font-size: 12px;
+    padding-top: 1px; /* Align better with tags */
 }
 
 #chart-container {
     display: flex;
     flex-direction: column;
-    justify-content: flex-start;
-    padding: 20px;
+    padding: 10px;
     border: 1px solid #ddd;
     border-radius: 5px;
-    gap: 10px;
     flex-grow: 1;
+    overflow: hidden; /* Prevent parent overflow */
+}
+
+#chart-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 10px;
+    flex-shrink: 0;
+    border-bottom: 2px solid #ddd;
+    margin-bottom: 5px;
+}
+
+#chart-header .resize-handle {
+    align-self: stretch;
+}
+
+.chart-label-header {
+    font-weight: bold;
+    color: #333;
+    padding: 10px 0;
+}
+
+.chart-bar-header {
+    flex-grow: 1;
+    font-weight: bold;
+    color: #333;
+    padding: 10px 0;
+}
+
+.chart-count-header {
+    width: 80px;
+    font-weight: bold;
+    color: #333;
+    padding: 10px 0;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+#chart-rows {
     overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 5px; /* Add some padding for scrollbar */
 }
 
 .chart-row {
@@ -190,8 +262,7 @@ html, body {
 }
 
 .chart-row .label {
-    min-width: 100px;
-    max-width: 100px;
+    /* Width will be set dynamically by JS */
     font-size: 12px;
     color: #333;
     font-weight: 500;
@@ -209,6 +280,15 @@ html, body {
 .chart-bar-container {
     flex-grow: 1;
     display: flex;
+}
+
+.chart-row .count {
+    width: 80px;
+    font-size: 12px;
+    color: #333;
+    font-weight: 500;
+    text-align: right;
+    flex-shrink: 0;
 }
 
 .chart-bar {

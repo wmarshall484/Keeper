@@ -4,30 +4,56 @@ window.addEventListener('DOMContentLoaded', async () => {
     const chartContainer = document.getElementById('chart-container');
     let contextMenu = null;
     let editor = null;
+    let editorReady = false;
     let selectedFileItem = null;
 
     // Function to scroll editor to a specific line
     async function scrollToRuleLine(filePath, isDirectory) {
-        if (!editor) return;
+        console.log('scrollToRuleLine called for:', filePath, 'isDirectory:', isDirectory);
+
+        if (!editor || !editorReady) {
+            console.log('Editor not ready yet');
+            return;
+        }
 
         const ruleInfo = await window.electronAPI.getRuleInfo(filePath, isDirectory);
+        console.log('Rule info received:', ruleInfo);
+
+        if (!ruleInfo) {
+            console.log('No rule info found for this file');
+            return;
+        }
 
         if (ruleInfo && ruleInfo.lineNumber) {
-            // Scroll to the line and highlight it
-            editor.revealLineInCenter(ruleInfo.lineNumber);
-            editor.setPosition({ lineNumber: ruleInfo.lineNumber, column: 1 });
+            console.log('Attempting to scroll to line:', ruleInfo.lineNumber);
+            try {
+                // Wait a tick to ensure editor is fully rendered
+                await new Promise(resolve => setTimeout(resolve, 0));
 
-            // Add selection to highlight the line
-            const lineContent = editor.getModel().getLineContent(ruleInfo.lineNumber);
-            editor.setSelection({
-                startLineNumber: ruleInfo.lineNumber,
-                startColumn: 1,
-                endLineNumber: ruleInfo.lineNumber,
-                endColumn: lineContent.length + 1
-            });
+                // Scroll to the line and highlight it
+                editor.revealLineInCenter(ruleInfo.lineNumber);
+                editor.setPosition({ lineNumber: ruleInfo.lineNumber, column: 1 });
 
-            // Focus the editor
-            editor.focus();
+                // Add selection to highlight the line
+                const model = editor.getModel();
+                if (model) {
+                    const lineContent = model.getLineContent(ruleInfo.lineNumber);
+                    editor.setSelection({
+                        startLineNumber: ruleInfo.lineNumber,
+                        startColumn: 1,
+                        endLineNumber: ruleInfo.lineNumber,
+                        endColumn: lineContent.length + 1
+                    });
+                }
+
+                // Focus the editor
+                editor.focus();
+                console.log('Successfully scrolled to line:', ruleInfo.lineNumber);
+            } catch (error) {
+                console.error('Error scrolling to line:', error);
+            }
+        } else {
+            console.log('Rule found but no line number. Pattern:', ruleInfo.pattern, 'Owners:', ruleInfo.owners);
         }
     }
 
@@ -135,6 +161,81 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     setupResizablePane('resize-handle-1', 'info-pane', 'middle-pane');
     setupResizablePane('resize-handle-2', 'middle-pane', 'right-pane');
+
+    // --- Resizer for File List Owner Column ---
+    let fileListOwnerWidth = 170; // Default width in px
+
+    function updateOwnerWidthStyle(width) {
+        let styleElement = document.getElementById('file-list-owner-style');
+        if (!styleElement) {
+            styleElement = document.createElement('style');
+            styleElement.id = 'file-list-owner-style';
+            document.head.appendChild(styleElement);
+        }
+        styleElement.textContent = `
+            .owner-header, .file-item .owner {
+                width: ${width}px;
+            }
+        `;
+    }
+
+    function setupOwnerResizer(handleId) {
+        const handle = document.getElementById(handleId);
+        if (!handle) return;
+
+        let isResizing = false;
+        let startX = 0;
+        let startWidth = 0;
+
+        handle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            startX = e.clientX;
+            startWidth = fileListOwnerWidth;
+
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            // The file list grows from left to right, but the owner column is on the right.
+            // So we need to invert the delta. A positive delta (mouse moves right) should shrink the column.
+            const delta = e.clientX - startX;
+            let newWidth = startWidth - delta;
+
+            const minWidth = 80;
+            const maxWidth = 500;
+            newWidth = Math.max(minWidth, Math.min(newWidth, maxWidth));
+
+            fileListOwnerWidth = newWidth;
+            updateOwnerWidthStyle(newWidth);
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isResizing) {
+                isResizing = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            }
+        });
+    }
+
+    // Insert the handle into the DOM and set up the resizer
+    const fileListHeader = document.getElementById('file-list-header');
+    if (fileListHeader) {
+        const nameHeader = fileListHeader.querySelector('.name-header');
+        if (nameHeader) {
+            const handle = document.createElement('div');
+            handle.id = 'file-list-resize-handle';
+            handle.className = 'resize-handle';
+            nameHeader.insertAdjacentElement('afterend', handle);
+
+            updateOwnerWidthStyle(fileListOwnerWidth); // Set initial width
+            setupOwnerResizer('file-list-resize-handle');
+        }
+    }
+    // --- End Resizer Setup ---
 
     // Custom prompt dialog functionality
     const promptOverlay = document.getElementById('custom-prompt-overlay');
@@ -355,26 +456,125 @@ window.addEventListener('DOMContentLoaded', async () => {
         contextMenu.style.visibility = 'visible';
     }
 
-    async function renderChart(codeownersFound) {
-        if (!codeownersFound) {
-            chartContainer.innerHTML = '<p style="color: red; text-align: center;">CODEOWNERS file not found in the project root.</p>';
-            return;
-        }
+    let chartLabelWidth = 150; // Default width
 
-        chartContainer.innerHTML = 'Loading...';
-        const directory = await window.electronAPI.getDirectory();
-        const stats = await window.electronAPI.getOwnershipStats(directory);
+    // Function to dynamically update the CSS for chart labels
+    function updateChartLabelWidthStyle(width) {
+        let styleElement = document.getElementById('chart-label-style');
+        if (!styleElement) {
+            styleElement = document.createElement('style');
+            styleElement.id = 'chart-label-style';
+            document.head.appendChild(styleElement);
+        }
+        // Set both min and max width to enforce the size
+        styleElement.textContent = `
+            .chart-row .label {
+                min-width: ${width}px;
+                max-width: ${width}px;
+            }
+            .chart-label-header {
+                min-width: ${width}px;
+                max-width: ${width}px;
+            }
+        `;
+    }
+
+    function setupChartLabelResizer() {
+        let isResizing = false;
+        let startX = 0;
+        let startWidth = 0;
+
+        chartContainer.addEventListener('mousedown', (e) => {
+            // Only trigger if the user clicks on the resize handle
+            if (e.target.id !== 'chart-resize-handle') {
+                return;
+            }
+
+            isResizing = true;
+            startX = e.clientX;
+            startWidth = chartLabelWidth; // Use the global width
+
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+
+            const delta = e.clientX - startX;
+            let newWidth = startWidth + delta;
+
+            // Apply constraints
+            const minWidth = 80;
+            const maxWidth = 500;
+            newWidth = Math.max(minWidth, Math.min(newWidth, maxWidth));
+
+            chartLabelWidth = newWidth; // Update global state
+            updateChartLabelWidthStyle(newWidth); // Update style tag
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isResizing) {
+                isResizing = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            }
+        });
+    }
+
+
+    function updateChartDisplay(stats) {
+        const wasEmpty = chartContainer.querySelector('#chart-rows') === null;
 
         if (stats.length === 0) {
             chartContainer.innerHTML = '<p>No ownership information to display for this directory.</p>';
             return;
         }
 
-        chartContainer.innerHTML = '';
 
-        // Sort stats by percentage in descending order
+        // Only build the header if it's the first time
+        if (wasEmpty) {
+            chartContainer.innerHTML = ''; // Clear existing content
+
+            // 1. Create Header
+            const header = document.createElement('div');
+            header.id = 'chart-header';
+
+            const labelHeader = document.createElement('div');
+            labelHeader.className = 'chart-label-header';
+            labelHeader.textContent = 'Owner';
+            header.appendChild(labelHeader);
+
+            const resizeHandle = document.createElement('div');
+            resizeHandle.id = 'chart-resize-handle';
+            resizeHandle.className = 'resize-handle';
+            header.appendChild(resizeHandle);
+
+            const barHeader = document.createElement('div');
+            barHeader.className = 'chart-bar-header';
+            barHeader.textContent = 'Percent';
+            header.appendChild(barHeader);
+
+            const countHeader = document.createElement('div');
+            countHeader.className = 'chart-count-header';
+            countHeader.textContent = 'Count';
+            header.appendChild(countHeader);
+
+            chartContainer.appendChild(header);
+
+            // 2. Create container for scrollable rows
+            const rowsContainer = document.createElement('div');
+            rowsContainer.id = 'chart-rows';
+            chartContainer.appendChild(rowsContainer);
+        }
+
+        const rowsContainer = chartContainer.querySelector('#chart-rows');
+        rowsContainer.innerHTML = ''; // Clear only the rows
+
+        // 3. Populate rows
         const sortedStats = stats.sort((a, b) => b.percentage - a.percentage);
-
         sortedStats.forEach(stat => {
             const row = document.createElement('div');
             row.className = 'chart-row';
@@ -385,7 +585,7 @@ window.addEventListener('DOMContentLoaded', async () => {
                 label.classList.add('unset');
             }
             label.textContent = stat.owner;
-            label.title = stat.owner; // Show full name on hover
+            label.title = stat.owner;
 
             const barContainer = document.createElement('div');
             barContainer.className = 'chart-bar-container';
@@ -398,12 +598,34 @@ window.addEventListener('DOMContentLoaded', async () => {
             percentage.className = 'percentage';
             percentage.textContent = `${stat.percentage.toFixed(1)}%`;
 
+            const count = document.createElement('div');
+            count.className = 'count';
+            count.textContent = stat.count.toLocaleString();
+
             bar.appendChild(percentage);
             barContainer.appendChild(bar);
             row.appendChild(label);
             row.appendChild(barContainer);
-            chartContainer.appendChild(row);
+            row.appendChild(count);
+            rowsContainer.appendChild(row);
         });
+    }
+
+    // Set initial width on load & set up resizer ONCE
+    updateChartLabelWidthStyle(chartLabelWidth);
+    setupChartLabelResizer();
+
+    async function renderChart(codeownersFound) {
+        if (!codeownersFound) {
+            chartContainer.innerHTML = '<p style="color: red; text-align: center;">CODEOWNERS file not found in the project root.</p>';
+            return;
+        }
+
+        chartContainer.innerHTML = 'Loading...';
+        const directory = await window.electronAPI.getDirectory();
+        const stats = await window.electronAPI.getOwnershipStats(directory);
+
+        updateChartDisplay(stats);
     }
 
     async function renderFiles() {
@@ -443,7 +665,15 @@ window.addEventListener('DOMContentLoaded', async () => {
             owner.className = 'owner';
 
             if (file.owner) {
-                owner.textContent = file.owner;
+                const owners = file.owner.split(' ').filter(o => o);
+                owner.title = owners.join(', '); // Keep tooltip for readability
+
+                owners.forEach(ownerName => {
+                    const ownerTag = document.createElement('span');
+                    ownerTag.className = 'owner-tag';
+                    ownerTag.textContent = ownerName;
+                    owner.appendChild(ownerTag);
+                });
             } else {
                 owner.textContent = '<unset>';
                 owner.classList.add('unset');
@@ -455,6 +685,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
             // Add single-click handler to highlight and show rule
             fileItem.addEventListener('click', async (e) => {
+                console.log('File item clicked. Calling scrollToRuleLine...');
                 const filePath = await getFilePath();
 
                 // Remove previous selection
@@ -504,10 +735,22 @@ window.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    async function updateCurrentPath() {
+        const initialDirectory = await window.electronAPI.getInitialDirectory();
+        const currentDirectory = await window.electronAPI.getDirectory();
+        const currentPathElement = document.getElementById('current-path');
+
+        if (currentPathElement) {
+            // Show relative path from initial directory
+            const relativePath = currentDirectory.replace(initialDirectory, '') || '/';
+            currentPathElement.textContent = relativePath;
+        }
+    }
+
     async function renderAll() {
         const initialDirectory = await window.electronAPI.getInitialDirectory();
         const currentDirectory = await window.electronAPI.getDirectory();
-        
+
         console.log('Initial Directory:', initialDirectory);
         console.log('Current Directory:', currentDirectory);
         console.log('Are directories equal?', currentDirectory === initialDirectory);
@@ -515,8 +758,8 @@ window.addEventListener('DOMContentLoaded', async () => {
         upButton.disabled = (currentDirectory === initialDirectory);
 
         const codeownersFound = await window.electronAPI.wasCodeownersFound();
-        
-        await Promise.all([renderFiles(), renderChart(codeownersFound)]);
+
+        await Promise.all([renderFiles(), renderChart(codeownersFound), updateCurrentPath()]);
     }
 
     await renderAll();
@@ -533,6 +776,16 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
+    // Listen for incremental stats updates
+    window.electronAPI.onStatsProgress(async (dirPath, partialStats) => {
+        const currentDir = await window.electronAPI.getDirectory();
+        // Only update if this is still the current directory
+        if (dirPath === currentDir) {
+            console.log('Received progress update with', partialStats.length, 'owners');
+            updateChartDisplay(partialStats);
+        }
+    });
+
     // Debug info - log to console
     const debugInfo = await window.electronAPI.getDebugInfo();
     console.log('=== DEBUG INFO ===');
@@ -544,6 +797,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     console.log('==================');
 
     // Initialize Monaco Editor
+    console.log('Attempting to initialize Monaco Editor...');
     require(['vs/editor/editor.main'], async function() {
         const editorContainer = document.getElementById('editor-container');
 
@@ -567,6 +821,11 @@ window.addEventListener('DOMContentLoaded', async () => {
             fontSize: 13,
             wordWrap: 'off'
         });
+
+        // Mark editor as ready
+        editorReady = true;
+        console.log('Monaco Editor has been successfully initialized.');
+        console.log('Monaco editor initialized and ready');
 
         // Add save shortcut (Ctrl+S or Cmd+S)
         editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, async function() {

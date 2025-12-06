@@ -3,6 +3,7 @@ const path = require('path');
 const process = require('process');
 const fs = require('fs');
 const { minimatch } = require('minimatch');
+const { Worker } = require('worker_threads');
 
 // Set the app name for macOS menu bar (must be before app.ready)
 if (process.platform === 'darwin') {
@@ -52,6 +53,9 @@ let ownerCache = new Map(); // Cache for file→owner lookups
 let codeownersTrie = null; // Trie for fast pattern matching
 let complexPatterns = []; // Patterns with wildcards that need minimatch
 let statsCache = new Map(); // Cache for directory→stats lookups
+let currentPrefetcher = null; // Current background prefetch operation
+let activeComputations = new Map(); // Track in-progress computations by directory path (stores Worker instances)
+let activeWorkers = new Map(); // Track active worker threads
 
 // TrieNode class for efficient path-based pattern matching
 class TrieNode {
@@ -132,6 +136,22 @@ function searchTrie(root, pathSegments) {
   return { owners: bestMatch, priority: bestPriority };
 }
 
+// Serialize trie for passing to worker thread
+function serializeTrie(node) {
+  const obj = {
+    owners: node.owners,
+    pattern: node.pattern,
+    priority: node.priority,
+    children: {}
+  };
+
+  for (const [key, childNode] of node.children.entries()) {
+    obj.children[key] = serializeTrie(childNode);
+  }
+
+  return obj;
+}
+
 function findAndParseGitignore(baseDir) {
   const gitignorePath = path.join(baseDir, '.gitignore');
 
@@ -187,19 +207,33 @@ function findAndParseCodeowners(baseDir) {
   for (const p of possiblePaths) {
     if (fs.existsSync(p)) {
       const content = fs.readFileSync(p, 'utf-8');
-      const parsed = content
-        .split('\n')
-        .filter(line => line.trim() !== '' && !line.startsWith('#'))
-        .map(line => {
-          let [pattern, ...owners] = line.trim().split(/\s+/);
-          if (pattern.startsWith('/')) {
-            pattern = pattern.substring(1);
+          const lines = content.split('\n');
+          const parsedWithLines = [];
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const trimmedLine = line.trim();
+            if (trimmedLine === '' || trimmedLine.startsWith('#')) {
+              continue;
+            }
+      
+            let [pattern, ...owners] = trimmedLine.split(/\s+/);
+            owners = owners.map(o => o.toLowerCase());
+      
+            if (pattern.startsWith('/')) {
+              pattern = pattern.substring(1);
+            }
+            if (pattern.endsWith('/')) {
+              pattern += '**';
+            }
+      
+            parsedWithLines.push({
+              pattern,
+              owners,
+              lineNumber: i + 1,
+              lineContent: trimmedLine
+            });
           }
-          if (pattern.endsWith('/')) {
-            pattern += '**';
-          }
-          return { pattern, owners };
-        }).reverse(); // Last match wins, so we reverse for easier iteration
+          const parsed = parsedWithLines.reverse(); // Last match wins, so we reverse for easier iteration
 
       codeownersFound = true;
 
@@ -212,6 +246,13 @@ function findAndParseCodeowners(baseDir) {
       ownerCache.clear();
       statsCache.clear();
 
+      // Terminate all active worker threads since they're now stale
+      for (const [dir, worker] of activeWorkers.entries()) {
+        worker.terminate();
+      }
+      activeWorkers.clear();
+      activeComputations.clear();
+
       console.log(`CODEOWNERS optimization: ${parsed.length - complex.length} simple patterns in trie, ${complex.length} complex patterns need minimatch`);
 
       return parsed;
@@ -223,6 +264,161 @@ function findAndParseCodeowners(baseDir) {
   ownerCache.clear();
   statsCache.clear();
   return null;
+}
+
+// Compute ownership stats using Worker Thread
+function computeOwnershipStatsAsync(dirPath, onProgress = null) {
+  return new Promise((resolve, reject) => {
+    // Serialize data for worker
+    const workerData = {
+      dirPath,
+      codeowners,
+      projectRoot,
+      gitignorePatterns,
+      codeownersTrie: codeownersTrie ? serializeTrie(codeownersTrie) : null,
+      complexPatterns
+    };
+
+    const worker = new Worker(path.join(__dirname, 'stats-worker.js'), { workerData });
+
+    activeWorkers.set(dirPath, worker);
+
+    worker.on('message', (msg) => {
+      if (msg.type === 'progress') {
+        if (onProgress) {
+          onProgress(msg.data);
+        }
+      } else if (msg.type === 'complete') {
+        // Cache all subdirectories from worker result
+        const allDirCountsObj = msg.data;
+        for (const [dir, ownerCounts] of Object.entries(allDirCountsObj)) {
+          const total = Object.values(ownerCounts).reduce((sum, count) => sum + count, 0);
+          if (total === 0) {
+            statsCache.set(dir, []);
+          } else {
+            const percentages = Object.entries(ownerCounts).map(([owner, count]) => ({
+              owner,
+              percentage: (count / total) * 100,
+              count
+            }));
+            statsCache.set(dir, percentages);
+          }
+        }
+
+        activeWorkers.delete(dirPath);
+        resolve(statsCache.get(dirPath) || []);
+      } else if (msg.type === 'error') {
+        activeWorkers.delete(dirPath);
+        reject(new Error(msg.error));
+      }
+    });
+
+    worker.on('error', (error) => {
+      activeWorkers.delete(dirPath);
+      reject(error);
+    });
+
+    worker.on('exit', (code) => {
+      if (code !== 0) {
+        activeWorkers.delete(dirPath);
+        reject(new Error(`Worker stopped with exit code ${code}`));
+      }
+    });
+  });
+}
+
+
+// Background prefetcher for caching nearby directories
+async function startBackgroundPrefetch(startDir) {
+  // Cancel previous prefetcher if running
+  if (currentPrefetcher) {
+    currentPrefetcher.cancelled = true;
+  }
+
+  const prefetcher = { cancelled: false };
+  currentPrefetcher = prefetcher;
+
+  console.log(`Starting background prefetch from: ${startDir}`);
+
+  const ignoredDirs = ['.git', 'node_modules'];
+  const queue = [];
+  let processed = 0;
+
+  // Start by adding children of startDir (not startDir itself, as it's being computed by get-ownership-stats)
+  try {
+    const entries = fs.readdirSync(startDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && !ignoredDirs.includes(entry.name)) {
+        const fullPath = path.join(startDir, entry.name);
+        if (!isIgnored(fullPath, projectRoot, gitignorePatterns)) {
+          queue.push(fullPath);
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`Prefetch error reading start dir: ${err.message}`);
+    return;
+  }
+
+  // BFS to find directories to prefetch
+  while (queue.length > 0 && !prefetcher.cancelled) {
+    const currentDir = queue.shift();
+
+    // Skip if already cached or already being computed
+    if (statsCache.has(currentDir) || activeComputations.has(currentDir) || activeWorkers.has(currentDir)) {
+      // Still add children to queue for exploration
+      try {
+        const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory() && !ignoredDirs.includes(entry.name)) {
+            const fullPath = path.join(currentDir, entry.name);
+            if (!isIgnored(fullPath, projectRoot, gitignorePatterns)) {
+              queue.push(fullPath);
+            }
+          }
+        }
+      } catch (err) {
+        // Skip if can't read
+      }
+      continue;
+    }
+
+    try {
+      // Mark as computing
+      activeComputations.set(currentDir, true);
+
+      // Compute stats using worker thread (runs on separate OS thread - no blocking!)
+      await computeOwnershipStatsAsync(currentDir, null);
+      activeComputations.delete(currentDir);
+      processed++;
+
+      // Check for cancellation after each directory
+      if (prefetcher.cancelled) {
+        break;
+      }
+
+      // Add direct children to BFS queue
+      const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory() && !ignoredDirs.includes(entry.name)) {
+          const fullPath = path.join(currentDir, entry.name);
+          if (!isIgnored(fullPath, projectRoot, gitignorePatterns)) {
+            queue.push(fullPath);
+          }
+        }
+      }
+
+    } catch (error) {
+      console.error(`Prefetch error for ${currentDir}:`, error.message);
+      activeComputations.delete(currentDir);
+    }
+  }
+
+  if (!prefetcher.cancelled) {
+    console.log(`Background prefetch completed. Processed ${processed} directories.`);
+  } else {
+    console.log(`Background prefetch cancelled after ${processed} directories.`);
+  }
 }
 
 function getOwner(filePath, isDirectory, codeowners, baseDir) {
@@ -259,7 +455,7 @@ function getOwner(filePath, isDirectory, codeowners, baseDir) {
     // Check complex patterns - must check ALL to find highest priority match
     if (complexPatterns.length > 0) {
         for (const rule of complexPatterns) {
-            if (minimatch(relativePath, rule.pattern, { dot: true })) {
+            if (rule.pattern === '*' || minimatch(relativePath, rule.pattern, { dot: true })) {
                 if (rule.priority > bestPriority) {
                     bestOwners = rule.owners;
                     bestPriority = rule.priority;
@@ -408,74 +604,31 @@ app.whenReady().then(() => {
       relativePath += '/';
     }
 
+    // Find the codeowners file path once, so we can return it
+    const possiblePaths = [
+      path.join(projectRoot, 'CODEOWNERS'),
+      path.join(projectRoot, '.github', 'CODEOWNERS'),
+      path.join(projectRoot, 'docs', 'CODEOWNERS'),
+    ];
+    const codeownersPath = possiblePaths.find(p => fs.existsSync(p));
+
+
     // Find which rule matches this file
-    // Remember codeowners array is reversed, so we iterate through it
+    // Remember codeowners array is reversed, so first match wins
     for (const rule of codeowners) {
-      if (minimatch(relativePath, rule.pattern, { dot: true })) {
-        // Found the matching rule
-        // Now find it in the original CODEOWNERS file to get line number
-        const possiblePaths = [
-          path.join(projectRoot, 'CODEOWNERS'),
-          path.join(projectRoot, '.github', 'CODEOWNERS'),
-          path.join(projectRoot, 'docs', 'CODEOWNERS'),
-        ];
+      let matches = minimatch(relativePath, rule.pattern, { dot: true });
 
-        let codeownersPath = null;
-        for (const p of possiblePaths) {
-          if (fs.existsSync(p)) {
-            codeownersPath = p;
-            break;
-          }
-        }
+      // If pattern is a directory (no wildcards, no trailing **), also check if file is inside it
+      if (!matches && !rule.pattern.includes('*') && !rule.pattern.includes('?')) {
+        matches = relativePath.startsWith(rule.pattern + '/');
+      }
 
-        if (!codeownersPath) {
-          return null;
-        }
-
-        // Read the file and find the line number
-        const content = fs.readFileSync(codeownersPath, 'utf-8');
-        const lines = content.split('\n');
-
-        // Create the rule pattern as it would appear in the file
-        let searchPattern = rule.pattern;
-        // The pattern might have had leading slash removed during parsing
-        // Try to find it with various formats
-
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].trim();
-          if (line === '' || line.startsWith('#')) continue;
-
-          const [linePattern, ...lineOwners] = line.split(/\s+/);
-          let normalizedLinePattern = linePattern;
-          if (normalizedLinePattern.startsWith('/')) {
-            normalizedLinePattern = normalizedLinePattern.substring(1);
-          }
-          if (normalizedLinePattern.endsWith('/') && !normalizedLinePattern.endsWith('**')) {
-            normalizedLinePattern += '**';
-          }
-
-          // Check if this is the matching rule
-          if (normalizedLinePattern === rule.pattern &&
-              lineOwners.join(' ') === rule.owners.join(' ')) {
-            return {
-              pattern: rule.pattern,
-              owners: rule.owners,
-              lineNumber: i + 1,
-              lineContent: line,
-              filePath: codeownersPath,
-              relativePath: path.relative(projectRoot, codeownersPath)
-            };
-          }
-        }
-
-        // If we couldn't find exact match, return info without line number
+      if (matches) {
+        // We found the rule, and it already has the line number!
         return {
-          pattern: rule.pattern,
-          owners: rule.owners,
-          lineNumber: null,
-          lineContent: null,
+          ...rule, // contains pattern, owners, lineNumber, lineContent
           filePath: codeownersPath,
-          relativePath: path.relative(projectRoot, codeownersPath)
+          relativePath: codeownersPath ? path.relative(projectRoot, codeownersPath) : null
         };
       }
     }
@@ -774,79 +927,50 @@ app.whenReady().then(() => {
         return statsCache.get(dirPath);
     }
 
-    console.log(`Stats cache miss, computing for: ${dirPath}`);
-
-    // Track counts for every directory we encounter
-    const allDirCounts = new Map(); // dirPath -> { owner -> count }
-    const ignoredDirs = ['.git', 'node_modules'];
-
-    function walk(currentDirPath) {
-      // Initialize counts for this directory
-      if (!allDirCounts.has(currentDirPath)) {
-        allDirCounts.set(currentDirPath, {});
-      }
-      const currentCounts = allDirCounts.get(currentDirPath);
-
-      const entries = fs.readdirSync(currentDirPath, { withFileTypes: true });
-      for (const entry of entries) {
-        if (ignoredDirs.includes(entry.name)) {
-            continue;
-        }
-
-        const fullPath = path.join(currentDirPath, entry.name);
-
-        // Skip files/directories that match .gitignore patterns
-        if (isIgnored(fullPath, projectRoot, gitignorePatterns)) {
-            continue;
-        }
-
-        const isDirectory = entry.isDirectory();
-        const owner = getOwner(fullPath, isDirectory, codeowners, projectRoot);
-
-        const ownerKey = owner || '<unset>';
-
-        // Increment count for current directory
-        currentCounts[ownerKey] = (currentCounts[ownerKey] || 0) + 1;
-
-        if (isDirectory) {
-          // Recursively walk subdirectory
-          walk(fullPath);
-
-          // Get child directory counts and add to current directory
-          const childCounts = allDirCounts.get(fullPath);
-          if (childCounts) {
-            for (const [childOwner, childCount] of Object.entries(childCounts)) {
-              currentCounts[childOwner] = (currentCounts[childOwner] || 0) + childCount;
-            }
-          }
-        }
-      }
+    // Check if already computing
+    if (activeComputations.has(dirPath) || activeWorkers.has(dirPath)) {
+        console.log(`Computation already in progress for: ${dirPath}`);
+        return []; // Will receive updates via progress events
     }
 
-    walk(dirPath);
+    console.log(`Stats cache miss, starting worker thread for: ${dirPath}`);
 
-    // Convert all directory counts to percentages and cache them
-    for (const [dir, ownerCounts] of allDirCounts.entries()) {
-      const total = Object.values(ownerCounts).reduce((sum, count) => sum + count, 0);
-      if (total === 0) {
-        statsCache.set(dir, []);
-      } else {
-        const percentages = Object.entries(ownerCounts).map(([owner, count]) => {
-          return { owner, percentage: (count / total) * 100 };
-        });
-        statsCache.set(dir, percentages);
-        console.log(`Cached stats for subdirectory: ${dir}`);
+    // Mark as computing
+    activeComputations.set(dirPath, true);
+
+    // Start computation in background using Worker Thread (don't await it)
+    computeOwnershipStatsAsync(dirPath, (partialStats) => {
+      // Send incremental update to renderer
+      if (mainWindow) {
+        mainWindow.webContents.send('stats-progress', dirPath, partialStats);
       }
-    }
+    }).then(result => {
+      // Send final update when complete
+      if (mainWindow) {
+        mainWindow.webContents.send('stats-progress', dirPath, result);
+      }
+      activeComputations.delete(dirPath);
+      console.log(`Computation completed for: ${dirPath}`);
+    }).catch(err => {
+      console.error('Error computing stats:', err);
+      activeComputations.delete(dirPath);
+    });
 
-    // Return the stats for the requested directory
-    return statsCache.get(dirPath) || [];
+    // Return empty array immediately - renderer will update via progress events
+    return [];
   });
 
   ipcMain.on('navigate-to', (event, newPath) => {
     currentDirectory = newPath;
     if (mainWindow) {
         mainWindow.webContents.send('directory-changed');
+    }
+
+    // Start background prefetch from new directory
+    if (codeownersFound) {
+      startBackgroundPrefetch(newPath).catch(err => {
+        console.error('Background prefetch error:', err);
+      });
     }
   });
 
@@ -870,6 +994,13 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+
+  // Start background prefetch from initial directory
+  if (codeownersFound && currentDirectory) {
+    startBackgroundPrefetch(currentDirectory).catch(err => {
+      console.error('Initial background prefetch error:', err);
+    });
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
