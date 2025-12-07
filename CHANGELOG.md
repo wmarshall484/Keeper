@@ -1,3 +1,10 @@
+# 1.0.0 (2025-12-07)
+
+
+### Features
+
+* Initial commit. ([e5245c5](https://github.com/wmarshall484/Keeper/commit/e5245c5eb45446fd6a239a572c47f246cd399bff))
+
 ## [1.0.12](https://github.com/wmarshall484/Keeper/compare/v1.0.11...v1.0.12) (2025-12-07)
 
 
