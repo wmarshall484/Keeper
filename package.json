@@ -1,0 +1,110 @@
+{
+  "name": "@wmarshall484/keeper",
+  "productName": "Keeper",
+  "version": "1.0.13",
+  "main": "main.js",
+  "bin": {
+    "keeper": "bin/keeper.js"
+  },
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux",
+    "build:all": "electron-builder -mwl",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "codeowners",
+    "github",
+    "ownership"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wmarshall484/Keeper.git"
+  },
+  "author": "Will Marshall <wmarshall484@gmail.com>",
+  "license": "MIT",
+  "description": "A tool for managing and visualizing CODEOWNERS files",
+  "devDependencies": {
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^12.0.2",
+    "electron-builder": "^25.1.8",
+    "semantic-release": "^25.0.2",
+    "electron": "^39.2.6"
+  },
+  "dependencies": {
+    "minimatch": "^10.1.1",
+    "monaco-editor": "^0.55.1"
+  },
+  "build": {
+    "appId": "com.keeper.tool",
+    "productName": "Keeper",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer.js",
+      "index.html",
+      "style.css",
+      "keeper",
+      "node_modules/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "build/icon.png"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "icon": "build/icon.png",
+      "artifactName": "keeper-${version}.${ext}"
+    }
+  },
+  "release": {
+    "branches": [
+      "release"
+    ],
+    "plugins": [
+      "@semantic-release/commit-analyzer",
+      "@semantic-release/release-notes-generator",
+      "@semantic-release/changelog",
+      [
+        "@semantic-release/npm",
+        {
+          "npmPublish": false
+        }
+      ],
+      [
+        "@semantic-release/git",
+        {
+          "assets": [
+            "package.json",
+            "package-lock.json",
+            "CHANGELOG.md"
+          ],
+          "message": "chore(release): ${nextRelease.version} [skip ci]\\n\\n${nextRelease.notes}"
+        }
+      ],
+      "@semantic-release/github"
+    ]
+  }
+}

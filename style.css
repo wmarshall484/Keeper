@@ -1,0 +1,454 @@
+html, body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: #f4f4f4;
+}
+
+.app-container {
+    display: flex;
+    height: 100%;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+.info-pane {
+    width: 500px;
+    min-width: 200px;
+    padding-right: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.resize-handle {
+    width: 10px;
+    cursor: col-resize;
+    background-color: transparent;
+    position: relative;
+    flex-shrink: 0;
+}
+
+.resize-handle:hover {
+    background-color: #88ccee;
+}
+
+.resize-handle::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 4px;
+    width: 2px;
+    background-color: #ddd;
+}
+
+.info-pane h3 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    font-size: 16px;
+    color: #333;
+}
+
+#editor-container {
+    flex-grow: 1;
+    overflow: hidden;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+
+.middle-pane {
+    flex-grow: 1;
+    min-width: 300px;
+    padding: 0 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.right-pane {
+    width: 400px;
+    min-width: 200px;
+    padding-left: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.right-pane h2 {
+    text-align: center;
+    margin-top: 0;
+}
+
+.view-options {
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+#up-button {
+    background-color: #eee;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    padding: 10px 15px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    flex-shrink: 0;
+}
+
+#up-button:hover {
+    background-color: #ddd;
+}
+
+#current-path {
+    font-size: 14px;
+    color: #666;
+    font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex-grow: 1;
+}
+
+#file-list-header {
+    display: flex;
+    font-weight: bold;
+    color: #333;
+    padding: 0 10px;
+    border-bottom: 2px solid #ddd;
+    flex-shrink: 0; /* Prevent header from shrinking */
+}
+
+.name-header {
+    flex-grow: 1;
+}
+
+.owner-header {
+    text-align: right;
+    padding-right: 10px;
+    box-sizing: border-box;
+}
+
+#file-list {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-top: 5px;
+    overflow-y: auto;
+    flex-grow: 1;
+}
+
+.file-item {
+    display: flex;
+    align-items: flex-start;
+    background-color: #fff;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    padding: 10px;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    flex-shrink: 0; /* Prevent items from shrinking */
+}
+
+.file-item:hover {
+    background-color: #eee;
+}
+
+.file-item.selected {
+    background-color: #d0e8f7;
+    border-color: #88ccee;
+}
+
+.file-item .icon {
+    font-size: 20px;
+    margin-right: 10px;
+}
+
+.file-item .name {
+    font-size: 14px;
+    word-wrap: break-word;
+    flex-grow: 1;
+}
+
+.file-item .owner {
+    padding-right: 10px;
+    color: #333;
+    display: flex;
+    justify-content: flex-start;
+    gap: 4px;
+    flex-wrap: wrap; /* Allow tags to wrap to the next line */
+    box-sizing: border-box;
+}
+
+.owner-tag {
+    background-color: #e8e8e8;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.file-item .owner.unset {
+    color: #bbb;
+    font-style: italic;
+    justify-content: flex-end;
+    font-size: 12px;
+    padding-top: 1px; /* Align better with tags */
+}
+
+#chart-container {
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    flex-grow: 1;
+    overflow: hidden; /* Prevent parent overflow */
+}
+
+#chart-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 10px;
+    flex-shrink: 0;
+    border-bottom: 2px solid #ddd;
+    margin-bottom: 5px;
+}
+
+#chart-header .resize-handle {
+    align-self: stretch;
+}
+
+.chart-label-header {
+    font-weight: bold;
+    color: #333;
+    padding: 10px 0;
+}
+
+.chart-bar-header {
+    flex-grow: 1;
+    font-weight: bold;
+    color: #333;
+    padding: 10px 0;
+}
+
+.chart-count-header {
+    width: 80px;
+    font-weight: bold;
+    color: #333;
+    padding: 10px 0;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+#chart-rows {
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 5px; /* Add some padding for scrollbar */
+}
+
+.chart-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.chart-row .label {
+    /* Width will be set dynamically by JS */
+    font-size: 12px;
+    color: #333;
+    font-weight: 500;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 0;
+}
+
+.chart-row .label.unset {
+    color: #888;
+}
+
+.chart-bar-container {
+    flex-grow: 1;
+    display: flex;
+}
+
+.chart-row .count {
+    width: 80px;
+    font-size: 12px;
+    color: #333;
+    font-weight: 500;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+.chart-bar {
+    display: flex;
+    align-items: center;
+    background-color: #88ccee;
+    position: relative;
+    transition: width 0.3s ease-in-out;
+    min-height: 30px;
+    border-radius: 3px;
+    flex-grow: 0;
+    flex-shrink: 0;
+}
+
+.chart-bar .percentage {
+    padding: 0 10px;
+    font-size: 12px;
+    font-weight: bold;
+    color: #333;
+    white-space: nowrap;
+}
+
+.context-menu {
+    position: fixed;
+    background-color: #fff;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+    min-width: 200px;
+    z-index: 1000;
+    padding: 5px 0;
+}
+
+.context-menu-header {
+    padding: 10px 15px;
+    font-weight: bold;
+    font-size: 12px;
+    color: #666;
+    border-bottom: 1px solid #eee;
+    margin-bottom: 5px;
+}
+
+.context-menu-item {
+    padding: 10px 15px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    font-size: 14px;
+}
+
+.context-menu-item:hover {
+    background-color: #f0f0f0;
+}
+
+.context-menu-separator {
+    height: 1px;
+    background-color: #ddd;
+    margin: 5px 0;
+}
+
+.context-menu-item-remove {
+    color: #d9534f;
+}
+
+.context-menu-item-remove:hover {
+    background-color: #f8e3e2;
+}
+
+.hint-text {
+    padding: 10px;
+    text-align: center;
+    color: #333;
+    font-size: 14px;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+.prompt-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+}
+
+.prompt-dialog {
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    min-width: 400px;
+    max-width: 500px;
+}
+
+.prompt-header {
+    padding: 15px 20px;
+    border-bottom: 1px solid #ddd;
+    font-weight: bold;
+    font-size: 16px;
+}
+
+.prompt-body {
+    padding: 20px;
+}
+
+.prompt-body label {
+    display: block;
+    margin-bottom: 10px;
+    font-size: 13px;
+    color: #555;
+}
+
+.prompt-input {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    box-sizing: border-box;
+}
+
+.prompt-input:focus {
+    outline: none;
+    border-color: #88ccee;
+}
+
+.prompt-footer {
+    padding: 15px 20px;
+    border-top: 1px solid #ddd;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.prompt-button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.prompt-button-cancel {
+    background-color: #eee;
+    color: #333;
+}
+
+.prompt-button-cancel:hover {
+    background-color: #ddd;
+}
+
+.prompt-button-ok {
+    background-color: #88ccee;
+    color: #fff;
+}
+
+.prompt-button-ok:hover {
+    background-color: #66aacc;
+}

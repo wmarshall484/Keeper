@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Keeper</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <div class="info-pane">
+            <h3>CODEOWNERS Editor</h3>
+            <div id="editor-container"></div>
+        </div>
+        <div class="resize-handle" id="resize-handle-1"></div>
+        <div class="middle-pane">
+            <div class="view-options">
+                <button id="up-button">Up</button>
+                <div id="current-path"></div>
+            </div>
+            <div id="file-list-header">
+                <div class="name-header">Name</div>
+                <div class="owner-header">Codeowner</div>
+            </div>
+            <div id="file-list"></div>
+            <div class="hint-text">Right click to assign owner</div>
+        </div>
+        <div class="resize-handle" id="resize-handle-2"></div>
+        <div class="right-pane">
+            <h2>Ownership Stats</h2>
+            <div id="chart-container"></div>
+        </div>
+    </div>
+
+    <!-- Custom prompt dialog -->
+    <div id="custom-prompt-overlay" class="prompt-overlay" style="display: none;">
+        <div class="prompt-dialog">
+            <div class="prompt-header">Add New Owner</div>
+            <div class="prompt-body">
+                <label for="owner-input">Enter owner name (e.g., @username or @org/team):</label>
+                <input type="text" id="owner-input" class="prompt-input" />
+            </div>
+            <div class="prompt-footer">
+                <button id="prompt-cancel" class="prompt-button prompt-button-cancel">Cancel</button>
+                <button id="prompt-ok" class="prompt-button prompt-button-ok">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="./node_modules/monaco-editor/min/vs/loader.js"></script>
+    <script>
+        require.config({ paths: { vs: './node_modules/monaco-editor/min/vs' } });
+    </script>
+    <script src="renderer.js"></script>
+</body>
+</html>
