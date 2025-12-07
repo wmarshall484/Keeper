@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/wmarshall484/Keeper/compare/v1.0.0...v1.0.1) (2025-12-07)
+
+
+### Bug Fixes
+
+* Fix build hook ([c6186e6](https://github.com/wmarshall484/Keeper/commit/c6186e6f3b2d451e478b54bac1e7c5ac85daa4ef))
+
 # 1.0.0 (2025-12-07)
 
 
