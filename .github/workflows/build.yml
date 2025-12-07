@@ -1,8 +1,11 @@
 name: Build Release Assets
 
+permissions:
+  contents: write
+
 on:
   release:
-    types: [published]
+    types: [created]
 
 jobs:
   build:
@@ -25,10 +28,21 @@ jobs:
         run: npm ci
 
       - name: Build and Publish
-        # The --publish always flag tells electron-builder to publish artifacts to a new release
+        # The --publish always flag tells electron-builder to publish artifacts to a release
         # It automatically detects the GitHub release from the tag that triggered this workflow.
         run: npm run build -- --${{ matrix.os == 'windows-latest' && 'win' || (matrix.os == 'macos-latest' && 'mac' || 'linux') }} --publish always
         env:
           # This token is provided by GitHub Actions automatically and has permissions
           # to upload assets to an existing release.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "$TAG" --draft=false

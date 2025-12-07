@@ -17,6 +17,10 @@
     "github",
     "ownership"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wmarshall484/Keeper.git"
+  },
   "author": "Will Marshall <wmarshall484@gmail.com>",
   "license": "MIT",
   "description": "A tool for managing and visualizing CODEOWNERS files",
@@ -90,7 +94,12 @@
           "message": "chore(release): ${nextRelease.version} [skip ci]\\n\\n${nextRelease.notes}"
         }
       ],
-      "@semantic-release/github"
+      [
+        "@semantic-release/github",
+        {
+          "draft": true
+        }
+      ]
     ]
   }
 }
