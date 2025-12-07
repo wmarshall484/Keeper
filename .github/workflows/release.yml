@@ -13,7 +13,7 @@ jobs:
       contents: write
       id-token: write
     outputs:
-      new_release_tag: ${{ steps.semantic.outputs.new_release_tag }}
+      new_release_git_tag: ${{ steps.semantic.outputs.new_release_git_tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -37,7 +37,7 @@ jobs:
   build:
     name: Build for ${{ matrix.os }}
     needs: release
-    if: needs.release.outputs.new_release_tag != ''
+    if: needs.release.outputs.new_release_git_tag != ''
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -46,7 +46,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
         with:
-          ref: ${{ needs.release.outputs.new_release_tag }}
+          ref: ${{ needs.release.outputs.new_release_git_tag }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v3
@@ -68,7 +68,7 @@ jobs:
   publish:
     name: Publish Release Assets
     needs: [release, build]
-    if: needs.release.outputs.new_release_tag != ''
+    if: needs.release.outputs.new_release_git_tag != ''
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -81,7 +81,7 @@ jobs:
       - name: Upload Assets to Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.release.outputs.new_release_tag }}
+          TAG: ${{ needs.release.outputs.new_release_git_tag }}
         run: |
           shopt -s nullglob
           gh release upload "$TAG" ./artifacts/**/*.AppImage ./artifacts/**/*.deb ./artifacts/**/*.dmg ./artifacts/**/*.exe ./artifacts/**/*.zip --clobber
