@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/wmarshall484/Keeper/compare/v1.0.0...v1.0.1) (2025-12-07)
+
+
+### Bug Fixes
+
+* App cleanup on close and name bug. ([3679e1c](https://github.com/wmarshall484/Keeper/commit/3679e1cfd54c4c14f67c59d03b1fdb37a68a4458))
+
 # 1.0.0 (2025-12-07)
 
 
