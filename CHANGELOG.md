@@ -1,3 +1,10 @@
+## [1.0.5](https://github.com/wmarshall484/Keeper/compare/v1.0.4...v1.0.5) (2025-12-07)
+
+
+### Bug Fixes
+
+* dummy commit ([bc06926](https://github.com/wmarshall484/Keeper/commit/bc069261f469dbd491133cf60ebda55591c6fd22))
+
 ## [1.0.4](https://github.com/wmarshall484/Keeper/compare/v1.0.3...v1.0.4) (2025-12-07)
 
 
