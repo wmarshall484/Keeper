@@ -5,7 +5,7 @@ permissions:
 
 on:
   release:
-    types: [created]
+    types: [published]
 
 jobs:
   build:
@@ -27,14 +27,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build and Publish
-        # The --publish always flag tells electron-builder to publish artifacts to a release
-        # It automatically detects the GitHub release from the tag that triggered this workflow.
-        run: npm run build -- --${{ matrix.os == 'windows-latest' && 'win' || (matrix.os == 'macos-latest' && 'mac' || 'linux') }} --publish always
+      - name: Build
+        # We no longer use the --publish flag here. We build locally and upload as an artifact.
+        run: npm run build -- --${{ matrix.os == 'windows-latest' && 'win' || (matrix.os == 'macos-latest' && 'mac' || 'linux') }}
         env:
-          # This token is provided by GitHub Actions automatically and has permissions
-          # to upload assets to an existing release.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.os }}-build
+          path: dist
 
   publish:
     name: Publish Release
@@ -43,8 +46,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-      - name: Publish Release
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+
+      - name: Upload Assets to Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
-        run: gh release edit "$TAG" --draft=false
+        # Use find to upload all relevant artifacts to the existing release
+        run: find ./artifacts -type f -name "*.*" -print -exec gh release upload "$TAG" {} +
