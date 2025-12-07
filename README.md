@@ -1,194 +1,126 @@
 # Keeper
 
-A desktop application for managing and visualizing CODEOWNERS files. Easily browse your codebase, see who owns what, and assign ownership with a simple right-click interface.
+A visual desktop application for managing and editing GitHub CODEOWNERS files.
 
-## Features
+## Description
 
-- **Visual File Browser**: Navigate your codebase with an intuitive file explorer
-- **Ownership Visualization**: Bar chart showing ownership distribution across your project
-- **Right-Click Assignment**: Easily assign or change file/directory owners
-- **Recursive Directory Ownership**: Assign entire directories with a single click
-- **CODEOWNERS File Management**: Automatically reads and updates your CODEOWNERS file
-- **Cross-Platform**: Works on macOS, Windows, and Linux
-- **.gitignore Support**: Respects .gitignore patterns in ownership statistics
+Keeper is an Electron-based GUI tool that makes it easy to work with CODEOWNERS files at scale. Instead of manually editing patterns and searching through directories, Keeper provides a three-pane interface that lets you visualize ownership, edit rules, and assign owners interactively.
+
+### Key Features
+
+- **Visual File Browser**: Navigate your repository with ownership information displayed for every file and directory
+- **Integrated CODEOWNERS Editor**: Edit your CODEOWNERS file directly with Monaco Editor (the editor that powers VS Code)
+- **Ownership Statistics**: See at-a-glance charts showing code ownership distribution by percentage and file count
+- **Interactive Assignment**: Right-click any file or folder to assign or remove owners
+- **Rule Highlighting**: Click any file to automatically highlight the matching CODEOWNERS rule
+- **Smart Pattern Matching**: Optimized with trie data structures for fast pattern matching on large repositories
+- **Gitignore Support**: Automatically respects `.gitignore` patterns
+- **Background Processing**: Worker threads ensure the UI stays responsive even on large codebases
 
 ## Installation
 
-### Option 1: Download Pre-built Binaries (Coming Soon)
+### Via npm (recommended)
 
-Download the latest release for your platform from the [Releases page](https://github.com/yourusername/keeper/releases):
+```bash
+npm install -g @wmarshall484/keeper
+```
 
-- **macOS**: Download the `.dmg` file
-- **Windows**: Download the `.exe` installer or portable `.exe`
-- **Linux**: Download the `.AppImage` or `.deb` file
+### From GitHub Releases
 
-### Option 2: Build from Source
+Download the latest release for your platform:
 
-#### Prerequisites
+**https://github.com/wmarshall484/Keeper/releases**
 
-- Node.js (v18 or higher)
-- npm
+- **macOS**: Download the `.dmg` or `.zip` file
+- **Windows**: Download the `.exe` installer or portable version
+- **Linux**: Download the `.AppImage` or `.deb` package
 
-#### Steps
+### Build from Source
 
-1. Clone the repository:
-   ```bash
-   cd co_electron_app
-   ```
-
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-3. Run in development mode:
-   ```bash
-   npm start [path-to-repo]
-   ```
-
-4. Build for your platform:
-   ```bash
-   # Build for current platform
-   npm run build
-
-   # Build for specific platforms
-   npm run build:mac      # macOS (DMG + ZIP)
-   npm run build:win      # Windows (NSIS installer + portable)
-   npm run build:linux    # Linux (AppImage + deb)
-
-   # Build for all platforms
-   npm run build:all
-   ```
-
-   Built applications will be in the `dist/` directory.
+```bash
+git clone https://github.com/wmarshall484/Keeper.git
+cd Keeper
+npm install
+npm start
+```
 
 ## Usage
 
-### Installing the CLI Wrapper (Recommended)
+### Command Line
 
-For easy command-line usage with the packaged app:
+Launch Keeper with a repository path:
 
-1. Copy the `keeper` script to your PATH:
-   ```bash
-   cp keeper /usr/local/bin/keeper
-   # or
-   sudo cp keeper /usr/local/bin/keeper
-   ```
-
-2. Now you can use it from anywhere:
-   ```bash
-   keeper budgeter              # Relative path
-   keeper /path/to/repo         # Absolute path
-   keeper                       # Current directory
-   ```
-
-### Starting the Application
-
-**Development mode:**
 ```bash
-npm start /path/to/your/repo
+keeper /path/to/your/repo
 ```
 
-**Packaged app with wrapper script:**
+Or use a relative path:
+
 ```bash
-keeper budgeter              # Opens budgeter/ in current directory
-keeper ../other-project      # Opens relative path
-keeper /absolute/path        # Opens absolute path
-keeper                       # Opens current directory
+keeper .
+keeper ../another-repo
 ```
 
-**Packaged app without wrapper:**
-```bash
-open -a Keeper --args "$PWD/budgeter"     # Must use absolute path
-```
+If no path is provided, Keeper will prompt you to select a directory.
 
-**GUI mode:**
-- Double-click the Keeper app icon
-- Drag and drop a folder onto the app icon
+### Interface Overview
 
-### Managing Ownership
+Keeper displays a three-pane interface:
 
-1. **View Ownership**: Browse files and see current owners in the right column
-2. **Assign Owner**: Right-click any file or directory and select an owner
-3. **Add New Owner**: Right-click and choose "Add new owner..." to manually type an owner name
-4. **Remove Owner**: Right-click and choose "Remove owner" to unset ownership
-5. **View Stats**: Check the right panel for ownership distribution across the codebase
+1. **Left Pane - CODEOWNERS Editor**
+   - Edit your CODEOWNERS file directly
+   - Save changes with `Ctrl+S` (or `Cmd+S` on macOS)
+   - Syntax highlighting and line numbers
+
+2. **Middle Pane - File Browser**
+   - Navigate directories by double-clicking folders
+   - See owner tags for every file and folder
+   - Click any file to highlight its matching CODEOWNERS rule
+   - Use the "Up" button to navigate to parent directories
+
+3. **Right Pane - Ownership Statistics**
+   - Bar chart showing ownership distribution
+   - Percentages and file counts for each owner
+   - Automatically updates as you navigate
+
+### Assigning Owners
+
+**Right-click** any file or directory to:
+- Select from existing owners
+- Add a new owner (e.g., `@username` or `@org/team`)
+- Remove ownership rules
+
+Changes are automatically written to your CODEOWNERS file.
+
+### Keyboard Shortcuts
+
+- `Cmd+O` / `Ctrl+O`: Open a different repository
+- `Cmd+S` / `Ctrl+S`: Save CODEOWNERS file (when editor is focused)
+- `Cmd+R` / `Ctrl+R`: Reload the application
 
 ### CODEOWNERS File Location
 
-The tool automatically searches for CODEOWNERS files in these locations:
-- `/CODEOWNERS` (repository root)
+Keeper automatically searches for CODEOWNERS files in standard locations:
+- `/CODEOWNERS`
 - `/.github/CODEOWNERS`
 - `/docs/CODEOWNERS`
 
-### How Ownership Works
+## How It Works
 
-The tool follows GitHub's CODEOWNERS rules:
-- **Last match wins**: If multiple patterns match a file, the last one in the file takes precedence
-- **Directories**: Adding a trailing `/` to a path makes it apply recursively to all contents
-- **Dotfiles**: Hidden files and directories (starting with `.`) are properly matched
+Keeper parses your CODEOWNERS file and builds an optimized data structure for fast lookups:
+- **Simple patterns** (no wildcards) are stored in a trie for O(n) lookups
+- **Complex patterns** (with wildcards like `*.js` or `**/test/**`) use minimatch
+- **Worker threads** calculate ownership statistics in the background without blocking the UI
+- **Caching** ensures responsive navigation even in large repositories
 
-## Development
+## Repository
 
-### Project Structure
-
-```
-co_electron_app/
-├── main.js           # Electron main process
-├── renderer.js       # UI logic and event handlers
-├── preload.js        # Secure IPC bridge
-├── index.html        # Application UI
-├── style.css         # Styling
-├── package.json      # Dependencies and build config
-└── README.md         # This file
-```
-
-### Technologies Used
-
-- **Electron**: Desktop application framework
-- **Node.js**: Runtime environment
-- **minimatch**: Pattern matching for CODEOWNERS rules
-
-## Building for Distribution
-
-### Requirements for Building All Platforms
-
-- **From macOS**: Can build for macOS, Windows, and Linux
-- **From Windows**: Can build for Windows and Linux only
-- **From Linux**: Can build for Linux and Windows only
-
-### Creating Icons
-
-Place icon files in the `build/` directory:
-- `icon.png` - 1024x1024 PNG for all platforms
-
-electron-builder will automatically generate the appropriate icon formats for each platform.
-
-## Troubleshooting
-
-### "CODEOWNERS file not found"
-
-Make sure your repository has a CODEOWNERS file in one of the standard locations:
-- Root directory: `/CODEOWNERS`
-- GitHub directory: `/.github/CODEOWNERS`
-- Docs directory: `/docs/CODEOWNERS`
-
-### Ownership not updating after assignment
-
-Try navigating to a different directory and back to refresh the view.
-
-### App shows "Electron" in menu bar (development only)
-
-This is normal in development mode. The correct name appears in packaged builds.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit issues or pull requests.
+https://github.com/wmarshall484/Keeper
 
 ## License
 
-MIT License - see LICENSE file for details
+MIT
 
-## Support
+## Author
 
-For issues, questions, or suggestions, please open an issue on GitHub.
+Will Marshall (wmarshall484@gmail.com)

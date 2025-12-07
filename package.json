@@ -1,8 +1,11 @@
 {
-  "name": "keeper",
+  "name": "@wmarshall484/keeper",
   "productName": "Keeper",
   "version": "1.0.12",
   "main": "main.js",
+  "bin": {
+    "keeper": "bin/keeper.js"
+  },
   "scripts": {
     "start": "electron .",
     "build": "electron-builder",
@@ -28,11 +31,11 @@
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/git": "^10.0.1",
     "@semantic-release/github": "^12.0.2",
-    "electron": "^39.2.6",
     "electron-builder": "^25.1.8",
     "semantic-release": "^25.0.2"
   },
   "dependencies": {
+    "electron": "^39.2.6",
     "minimatch": "^10.1.1",
     "monaco-editor": "^0.55.1"
   },
@@ -86,7 +89,7 @@
       [
         "@semantic-release/npm",
         {
-          "npmPublish": false
+          "npmPublish": true
         }
       ],
       [
