@@ -1,3 +1,59 @@
+## [1.0.12](https://github.com/wmarshall484/Keeper/compare/v1.0.11...v1.0.12) (2025-12-07)
+
+
+### Bug Fixes
+
+* CI ([58f0bd1](https://github.com/wmarshall484/Keeper/commit/58f0bd1180ac5df11afbb87309ac51708e91ce1d))
+
+## [1.0.11](https://github.com/wmarshall484/Keeper/compare/v1.0.10...v1.0.11) (2025-12-07)
+
+
+### Bug Fixes
+
+* CI ([d3f2ea9](https://github.com/wmarshall484/Keeper/commit/d3f2ea9da3466729427ec29fa288f92ab27d61ae))
+
+## [1.0.10](https://github.com/wmarshall484/Keeper/compare/v1.0.9...v1.0.10) (2025-12-07)
+
+
+### Bug Fixes
+
+* CI ([d12be10](https://github.com/wmarshall484/Keeper/commit/d12be105fe6055419673ce64365626e0336c8adf))
+
+## [1.0.9](https://github.com/wmarshall484/Keeper/compare/v1.0.8...v1.0.9) (2025-12-07)
+
+
+### Bug Fixes
+
+* CI ([061a240](https://github.com/wmarshall484/Keeper/commit/061a240f452e40d1301cf8a86f8738860839e556))
+
+## [1.0.8](https://github.com/wmarshall484/Keeper/compare/v1.0.7...v1.0.8) (2025-12-07)
+
+
+### Bug Fixes
+
+* CI ([f4d9029](https://github.com/wmarshall484/Keeper/commit/f4d9029ea947099e5cc8a797a776beefa76bc0fc))
+
+## [1.0.7](https://github.com/wmarshall484/Keeper/compare/v1.0.6...v1.0.7) (2025-12-07)
+
+
+### Bug Fixes
+
+* CI ([2892c71](https://github.com/wmarshall484/Keeper/commit/2892c717baf64e52ee5937daf123fd72f8361a9e))
+
+## [1.0.6](https://github.com/wmarshall484/Keeper/compare/v1.0.5...v1.0.6) (2025-12-07)
+
+
+### Bug Fixes
+
+* CI ([1f6e205](https://github.com/wmarshall484/Keeper/commit/1f6e2050e39af45a977a44e37656948aadcfee5d))
+
+## [1.0.5](https://github.com/wmarshall484/Keeper/compare/v1.0.4...v1.0.5) (2025-12-07)
+
+
+### Bug Fixes
+
+* dummy commit ([bc06926](https://github.com/wmarshall484/Keeper/commit/bc069261f469dbd491133cf60ebda55591c6fd22))
+
 ## [1.0.4](https://github.com/wmarshall484/Keeper/compare/v1.0.3...v1.0.4) (2025-12-07)
 
 
