@@ -269,14 +269,15 @@ function findAndParseCodeowners(baseDir) {
 // Compute ownership stats using Worker Thread
 function computeOwnershipStatsAsync(dirPath, onProgress = null) {
   return new Promise((resolve, reject) => {
-    // Serialize data for worker
+    // Serialize data for worker, including the current stats cache
     const workerData = {
       dirPath,
       codeowners,
       projectRoot,
       gitignorePatterns,
       codeownersTrie: codeownersTrie ? serializeTrie(codeownersTrie) : null,
-      complexPatterns
+      complexPatterns,
+      initialCache: Object.fromEntries(statsCache), // Pass current cache
     };
 
     const worker = new Worker(path.join(__dirname, 'stats-worker.js'), { workerData });
@@ -288,20 +289,38 @@ function computeOwnershipStatsAsync(dirPath, onProgress = null) {
         if (onProgress) {
           onProgress(msg.data);
         }
-      } else if (msg.type === 'complete') {
-        // Cache all subdirectories from worker result
-        const allDirCountsObj = msg.data;
-        for (const [dir, ownerCounts] of Object.entries(allDirCountsObj)) {
-          const total = Object.values(ownerCounts).reduce((sum, count) => sum + count, 0);
+      } else if (msg.type === 'partial-result') {
+        // A subdirectory's computation is complete, cache it immediately.
+        const { dir, stats } = msg.data;
+        if (!statsCache.has(dir)) {
+          const total = Object.values(stats).reduce((sum, count) => sum + count, 0);
           if (total === 0) {
             statsCache.set(dir, []);
           } else {
-            const percentages = Object.entries(ownerCounts).map(([owner, count]) => ({
+            const percentages = Object.entries(stats).map(([owner, count]) => ({
               owner,
               percentage: (count / total) * 100,
               count
             }));
             statsCache.set(dir, percentages);
+          }
+        }
+      } else if (msg.type === 'complete') {
+        // Main computation is complete, cache all results
+        const allDirCountsObj = msg.data;
+        for (const [dir, ownerCounts] of Object.entries(allDirCountsObj)) {
+          if (!statsCache.has(dir)) { // Check again in case a partial result was already set
+            const total = Object.values(ownerCounts).reduce((sum, count) => sum + count, 0);
+            if (total === 0) {
+              statsCache.set(dir, []);
+            } else {
+              const percentages = Object.entries(ownerCounts).map(([owner, count]) => ({
+                owner,
+                percentage: (count / total) * 100,
+                count
+              }));
+              statsCache.set(dir, percentages);
+            }
           }
         }
 
@@ -329,6 +348,9 @@ function computeOwnershipStatsAsync(dirPath, onProgress = null) {
 
 
 // Background prefetcher for caching nearby directories
+const MAX_PREFETCH_WORKERS = 4; // Number of parallel workers for prefetching
+
+// Background prefetcher for caching nearby directories
 async function startBackgroundPrefetch(startDir) {
   // Cancel previous prefetcher if running
   if (currentPrefetcher) {
@@ -338,87 +360,98 @@ async function startBackgroundPrefetch(startDir) {
   const prefetcher = { cancelled: false };
   currentPrefetcher = prefetcher;
 
-  console.log(`Starting background prefetch from: ${startDir}`);
+  console.log(`Starting background prefetch from: ${startDir} with ${MAX_PREFETCH_WORKERS} workers`);
 
   const ignoredDirs = ['.git', 'node_modules'];
   const queue = [];
   let processed = 0;
+  const runningWorkers = new Set();
 
-  // Start by adding children of startDir (not startDir itself, as it's being computed by get-ownership-stats)
-  try {
-    const entries = fs.readdirSync(startDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory() && !ignoredDirs.includes(entry.name)) {
-        const fullPath = path.join(startDir, entry.name);
-        if (!isIgnored(fullPath, projectRoot, gitignorePatterns)) {
-          queue.push(fullPath);
-        }
-      }
-    }
-  } catch (err) {
-    console.error(`Prefetch error reading start dir: ${err.message}`);
-    return;
-  }
-
-  // BFS to find directories to prefetch
-  while (queue.length > 0 && !prefetcher.cancelled) {
-    const currentDir = queue.shift();
-
-    // Skip if already cached or already being computed
-    if (statsCache.has(currentDir) || activeComputations.has(currentDir) || activeWorkers.has(currentDir)) {
-      // Still add children to queue for exploration
-      try {
-        const entries = fs.readdirSync(currentDir, { withFileTypes: true });
-        for (const entry of entries) {
-          if (entry.isDirectory() && !ignoredDirs.includes(entry.name)) {
-            const fullPath = path.join(currentDir, entry.name);
-            if (!isIgnored(fullPath, projectRoot, gitignorePatterns)) {
-              queue.push(fullPath);
-            }
-          }
-        }
-      } catch (err) {
-        // Skip if can't read
-      }
-      continue;
-    }
-
+  function addChildrenToQueue(dir) {
     try {
-      // Mark as computing
-      activeComputations.set(currentDir, true);
-
-      // Compute stats using worker thread (runs on separate OS thread - no blocking!)
-      await computeOwnershipStatsAsync(currentDir, null);
-      activeComputations.delete(currentDir);
-      processed++;
-
-      // Check for cancellation after each directory
-      if (prefetcher.cancelled) {
-        break;
-      }
-
-      // Add direct children to BFS queue
-      const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (entry.isDirectory() && !ignoredDirs.includes(entry.name)) {
-          const fullPath = path.join(currentDir, entry.name);
+          const fullPath = path.join(dir, entry.name);
           if (!isIgnored(fullPath, projectRoot, gitignorePatterns)) {
             queue.push(fullPath);
           }
         }
       }
-
-    } catch (error) {
-      console.error(`Prefetch error for ${currentDir}:`, error.message);
-      activeComputations.delete(currentDir);
+    } catch (err) {
+      // Ignore errors like permission denied
     }
   }
 
-  if (!prefetcher.cancelled) {
-    console.log(`Background prefetch completed. Processed ${processed} directories.`);
-  } else {
-    console.log(`Background prefetch cancelled after ${processed} directories.`);
-  }
+  // Start by adding children of the start directory. This is the only
+  // traversal the main thread does. The workers handle the rest.
+  addChildrenToQueue(startDir);
+
+  const processQueue = async () => {
+    while (!prefetcher.cancelled) {
+      // Condition to exit: queue is empty, no workers are running.
+      if (queue.length === 0 && runningWorkers.size === 0) {
+        break;
+      }
+
+      // If queue is empty, just wait for a running worker to finish.
+      if (queue.length === 0) {
+        await Promise.race(runningWorkers);
+        continue;
+      }
+
+      // Launch new workers if we have capacity and items in the queue
+      while (queue.length > 0 && runningWorkers.size < MAX_PREFETCH_WORKERS) {
+        if (prefetcher.cancelled) break;
+
+        const currentDir = queue.shift();
+
+        // Skip if already cached, being computed, or worker is active for it.
+        // The worker would have cached all children, so no need to traverse here.
+        if (statsCache.has(currentDir) || activeComputations.has(currentDir) || activeWorkers.has(currentDir)) {
+          continue;
+        }
+
+        // Mark as computing
+        activeComputations.set(currentDir, true);
+
+        const workerPromise = computeOwnershipStatsAsync(currentDir, null)
+          .then(() => {
+            processed++;
+            // The worker handles the full recursive traversal, so the main
+            // thread doesn't need to add its children to the queue.
+          })
+          .catch((error) => {
+            console.error(`Prefetch worker error for ${currentDir}:`, error.message);
+          })
+          .finally(() => {
+            // Remove from tracking sets when done
+            activeComputations.delete(currentDir);
+            runningWorkers.delete(workerPromise);
+          });
+
+        runningWorkers.add(workerPromise);
+      }
+
+      // Wait for at least one worker to finish before trying to add more
+      if (runningWorkers.size > 0) {
+        await Promise.race(runningWorkers);
+      }
+    }
+
+    // Wait for any remaining workers to complete
+    await Promise.all(Array.from(runningWorkers));
+  };
+
+  processQueue().then(() => {
+    if (!prefetcher.cancelled) {
+      console.log(`Background prefetch completed. Processed ${processed} directories.`);
+    } else {
+      console.log(`Background prefetch cancelled after ${processed} directories.`);
+    }
+  }).catch(err => {
+    console.error('An unexpected error occurred during the prefetch process:', err);
+  });
 }
 
 function getOwner(filePath, isDirectory, codeowners, baseDir) {
@@ -927,15 +960,26 @@ app.whenReady().then(() => {
         return statsCache.get(dirPath);
     }
 
-    // Check if already computing
-    if (activeComputations.has(dirPath) || activeWorkers.has(dirPath)) {
-        console.log(`Computation already in progress for: ${dirPath}`);
-        return []; // Will receive updates via progress events
+    // This handler is for the directory the user is actively viewing, which takes priority.
+    // If a silent prefetch worker is already running for this exact directory, we must
+    // terminate it and start a new one that reports progress to the UI.
+    if (activeWorkers.has(dirPath)) {
+      console.log(`A prefetch worker for ${dirPath} is running. Terminating and restarting with priority.`);
+      const worker = activeWorkers.get(dirPath);
+      await worker.terminate(); // This triggers 'exit' on the worker, and rejection of its promise.
     }
 
-    console.log(`Stats cache miss, starting worker thread for: ${dirPath}`);
+    // If a computation was flagged but the worker hasn't been added to activeWorkers yet,
+    // this will ensure we don't accidentally return early.
+    if (activeComputations.has(dirPath)) {
+        console.log(`A computation for ${dirPath} was flagged. Taking over for priority view.`);
+        // The old worker's promise will reject and its finally() block will clean up.
+        // We can proceed to launch our new priority worker.
+    }
 
-    // Mark as computing
+    console.log(`Stats cache miss, starting priority worker thread for: ${dirPath}`);
+
+    // Mark as computing. We are now the authoritative process for this directory.
     activeComputations.set(dirPath, true);
 
     // Start computation in background using Worker Thread (don't await it)
@@ -952,7 +996,14 @@ app.whenReady().then(() => {
       activeComputations.delete(dirPath);
       console.log(`Computation completed for: ${dirPath}`);
     }).catch(err => {
-      console.error('Error computing stats:', err);
+      // A termination error is expected if we killed the worker.
+      if (err.message.includes('Worker stopped with exit code')) {
+        console.log(`Worker for ${dirPath} was terminated as expected.`);
+      } else {
+        console.error('Error computing stats:', err);
+      }
+      // Clean up the flag on error, unless it was a termination,
+      // in which case we might have already been superseded.
       activeComputations.delete(dirPath);
     });
 

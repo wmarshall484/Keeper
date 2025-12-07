@@ -112,6 +112,7 @@ function getOwner(filePath, isDirectory, codeowners, baseDir, trie, complexPatte
 }
 
 function computeStats() {
+  const { initialCache } = workerData;
   const ignoredDirs = ['.git', 'node_modules'];
   const allDirCounts = new Map();
   let itemsProcessed = 0;
@@ -123,6 +124,24 @@ function computeStats() {
   const trie = codeownersTrie ? deserializeTrie(codeownersTrie) : null;
 
   function walk(currentDirPath) {
+    // If the directory is already in the initial cache, use it and skip computation.
+    if (initialCache && initialCache[currentDirPath]) {
+      const cachedStatsArray = initialCache[currentDirPath];
+      const counts = {};
+      for (const item of cachedStatsArray) {
+        counts[item.owner] = item.count;
+      }
+      allDirCounts.set(currentDirPath, counts);
+
+      // ** NEW: Add the cached counts to the progressCounts to reflect this completed work.
+      if (currentDirPath.startsWith(dirPath)) { // Check if it's under the top-level dir
+        for (const [owner, count] of Object.entries(counts)) {
+            progressCounts[owner] = (progressCounts[owner] || 0) + count;
+        }
+      }
+      return; // Skip walking this directory
+    }
+
     if (!allDirCounts.has(currentDirPath)) {
       allDirCounts.set(currentDirPath, {});
     }
@@ -147,6 +166,9 @@ function computeStats() {
         walk(fullPath);
         const childCounts = allDirCounts.get(fullPath);
         if (childCounts) {
+          // Send this completed subdirectory's stats back as a partial result
+          parentPort.postMessage({ type: 'partial-result', data: { dir: fullPath, stats: childCounts } });
+
           for (const [childOwner, childCount] of Object.entries(childCounts)) {
             currentCounts[childOwner] = (currentCounts[childOwner] || 0) + childCount;
           }
@@ -159,7 +181,10 @@ function computeStats() {
         for (const owner of owners) {
           if (owner) { // Ensure owner is not an empty string from splitting
             currentCounts[owner] = (currentCounts[owner] || 0) + 1;
-            progressCounts[owner] = (progressCounts[owner] || 0) + 1;
+            // Only update top-level progress with file counts from the current directory tree
+            if (currentDirPath.startsWith(dirPath)) {
+              progressCounts[owner] = (progressCounts[owner] || 0) + 1;
+            }
           }
         }
       }
@@ -180,32 +205,12 @@ function computeStats() {
           }
         }
       }
-
-      // Send progress update after top-level subdirectories are done
-      if (isDirectory && currentDirPath === dirPath) {
-        updateCounter++;
-        if (updateCounter % 2 === 0) {
-          const now = Date.now();
-          if ((now - lastProgressTime) >= 250) {
-            lastProgressTime = now;
-            const total = Object.values(progressCounts).reduce((sum, count) => sum + count, 0);
-            if (total > 0) {
-              const percentages = Object.entries(progressCounts).map(([owner, count]) => ({
-                owner,
-                percentage: (count / total) * 100,
-                count
-              }));
-              parentPort.postMessage({ type: 'progress', data: percentages });
-            }
-          }
-        }
-      }
     }
   }
 
   walk(dirPath);
 
-  // Convert allDirCounts to serializable format
+  // Convert allDirCounts to serializable format for the final 'complete' message
   const allDirCountsObj = {};
   for (const [dir, counts] of allDirCounts.entries()) {
     allDirCountsObj[dir] = counts;
