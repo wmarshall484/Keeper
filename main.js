@@ -5,7 +5,7 @@ const fs = require('fs');
 const { minimatch } = require('minimatch');
 const { Worker } = require('worker_threads');
 
-// Set the app name for macOS menu bar (must be before app.ready).
+// Set the app name for macOS menu bar (must be before app.ready)
 if (process.platform === 'darwin') {
   app.name = 'Keeper';
 }
