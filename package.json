@@ -70,8 +70,6 @@
       "icon": "build/icon.png"
     },
     "linux": {
-      "name": "keeper",
-      "packageName": "keeper",
       "target": [
         "AppImage",
         "deb"
