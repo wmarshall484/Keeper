@@ -1,3 +1,11 @@
+## [1.0.3](https://github.com/wmarshall484/Keeper/compare/v1.0.2...v1.0.3) (2025-12-07)
+
+
+### Bug Fixes
+
+* Fix deploy CI ([288d83a](https://github.com/wmarshall484/Keeper/commit/288d83ad396b01d511e9677e65704676c1833679))
+* Fix deploy CI ([c124ee6](https://github.com/wmarshall484/Keeper/commit/c124ee67c0f38d2fbd51fc50a4c8febd8e683d84))
+
 ## [1.0.2](https://github.com/wmarshall484/Keeper/compare/v1.0.1...v1.0.2) (2025-12-07)
 
 
