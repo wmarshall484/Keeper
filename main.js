@@ -616,7 +616,7 @@ app.whenReady().then(() => {
     // Find which rule matches this file
     // Remember codeowners array is reversed, so first match wins
     for (const rule of codeowners) {
-      let matches = minimatch(relativePath, rule.pattern, { dot: true });
+      let matches = (rule.pattern === '*') || minimatch(relativePath, rule.pattern, { dot: true });
 
       // If pattern is a directory (no wildcards, no trailing **), also check if file is inside it
       if (!matches && !rule.pattern.includes('*') && !rule.pattern.includes('?')) {

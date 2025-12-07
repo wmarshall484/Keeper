@@ -1,7 +1,7 @@
 {
   "name": "@wmarshall484/keeper",
   "productName": "Keeper",
-  "version": "1.0.0",
+  "version": "1.0.13",
   "main": "main.js",
   "bin": {
     "keeper": "bin/keeper.js"
@@ -89,8 +89,7 @@
       [
         "@semantic-release/npm",
         {
-          "npmPublish": true,
-          "provenance": true
+          "npmPublish": false
         }
       ],
       [
