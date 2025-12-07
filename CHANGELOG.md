@@ -1,3 +1,10 @@
+## [1.0.9](https://github.com/wmarshall484/Keeper/compare/v1.0.8...v1.0.9) (2025-12-07)
+
+
+### Bug Fixes
+
+* CI ([061a240](https://github.com/wmarshall484/Keeper/commit/061a240f452e40d1301cf8a86f8738860839e556))
+
 ## [1.0.8](https://github.com/wmarshall484/Keeper/compare/v1.0.7...v1.0.8) (2025-12-07)
 
 
