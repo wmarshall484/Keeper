@@ -75,7 +75,8 @@
         "deb"
       ],
       "category": "Development",
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "artifactName": "keeper-${version}.${ext}"
     }
   },
   "release": {
