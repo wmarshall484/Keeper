@@ -56,5 +56,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
-        # Use find to upload all relevant artifacts to the existing release
-        run: find ./artifacts -type f -name "*.*" -print -exec gh release upload "$TAG" {} +
+        # Use gh release upload with glob patterns to upload only the final distributable files
+        run: gh release upload "$TAG" ./artifacts/**/*{.AppImage,.deb,.dmg,.zip,.exe,.nsis.exe,*.blockmap,*.yml} --clobber
