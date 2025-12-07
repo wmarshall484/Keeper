@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/wmarshall484/Keeper/compare/v1.0.1...v1.0.2) (2025-12-07)
+
+
+### Bug Fixes
+
+* Add author to linux build. ([b75dfde](https://github.com/wmarshall484/Keeper/commit/b75dfde44f909e11400dc8e13143bd79f134d14f))
+
 ## [1.0.1](https://github.com/wmarshall484/Keeper/compare/v1.0.0...v1.0.1) (2025-12-07)
 
 
