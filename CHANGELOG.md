@@ -1,3 +1,10 @@
+## [1.0.4](https://github.com/wmarshall484/Keeper/compare/v1.0.3...v1.0.4) (2025-12-07)
+
+
+### Bug Fixes
+
+* make semantic release publish drafts. ([485767e](https://github.com/wmarshall484/Keeper/commit/485767e3beb6b2343a8fa662734fed8092ace8fa))
+
 ## [1.0.3](https://github.com/wmarshall484/Keeper/compare/v1.0.2...v1.0.3) (2025-12-07)
 
 
