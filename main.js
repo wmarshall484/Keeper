@@ -216,7 +216,10 @@ function findAndParseCodeowners(baseDir) {
               continue;
             }
       
-            let [pattern, ...owners] = trimmedLine.split(/\s+/);
+            let [pattern, ...owners] = trimmedLine.split(/(?<!\\)\s+/);
+            if (pattern) {
+              pattern = pattern.replace(/\\ /g, ' ');
+            }
             owners = owners.map(o => o.toLowerCase());
       
             if (pattern.startsWith('/')) {
@@ -985,12 +988,12 @@ app.whenReady().then(() => {
     // Start computation in background using Worker Thread (don't await it)
     computeOwnershipStatsAsync(dirPath, (partialStats) => {
       // Send incremental update to renderer
-      if (mainWindow) {
+      if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('stats-progress', dirPath, partialStats);
       }
     }).then(result => {
       // Send final update when complete
-      if (mainWindow) {
+      if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('stats-progress', dirPath, result);
       }
       activeComputations.delete(dirPath);
