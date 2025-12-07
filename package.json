@@ -21,8 +21,12 @@
   "license": "MIT",
   "description": "A tool for managing and visualizing CODEOWNERS files",
   "devDependencies": {
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^12.0.2",
     "electron": "^39.2.6",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "semantic-release": "^25.0.2"
   },
   "dependencies": {
     "minimatch": "^10.1.1",
@@ -66,5 +70,27 @@
       "category": "Development",
       "icon": "build/icon.png"
     }
+  },
+  "release": {
+    "branches": [
+      "release"
+    ],
+    "plugins": [
+      "@semantic-release/commit-analyzer",
+      "@semantic-release/release-notes-generator",
+      "@semantic-release/changelog",
+      [
+        "@semantic-release/git",
+        {
+          "assets": [
+            "package.json",
+            "package-lock.json",
+            "CHANGELOG.md"
+          ],
+          "message": "chore(release): ${nextRelease.version} [skip ci]\\n\\n${nextRelease.notes}"
+        }
+      ],
+      "@semantic-release/github"
+    ]
   }
 }
