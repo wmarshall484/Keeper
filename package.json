@@ -17,7 +17,7 @@
     "github",
     "ownership"
   ],
-  "author": "",
+  "author": "Will Marshall <wmarshall484@gmail.com>",
   "license": "MIT",
   "description": "A tool for managing and visualizing CODEOWNERS files",
   "devDependencies": {
