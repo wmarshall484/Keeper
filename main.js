@@ -40,7 +40,7 @@ if (!initialDirectory || !fs.existsSync(initialDirectory)) {
 }
 
 let currentDirectory = initialDirectory;
-let projectRoot = initialDirectory && initialDirectory.endsWith('co_electron_app') ? path.dirname(initialDirectory) : initialDirectory;
+let projectRoot = initialDirectory;
 
 console.log('projectRoot:', projectRoot);
 console.log('needsDirectorySelection:', needsDirectorySelection);
