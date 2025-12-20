@@ -10,7 +10,7 @@ if (process.platform === 'darwin') {
   app.name = 'Keeper';
 }
 
-// Get the initial directory from command line args
+// Get the initial directory from command line args.
 // In packaged apps, process.argv[1] is the first user arg
 // In dev mode, process.argv[2] is the first user arg
 let initialDirectory;
