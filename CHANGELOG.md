@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/wmarshall484/Keeper/compare/v1.0.1...v1.0.2) (2025-12-20)
+
+
+### Bug Fixes
+
+* trigger release ([5d3e07d](https://github.com/wmarshall484/Keeper/commit/5d3e07d17013d31a47e1ae8592ee9697ce8100a1))
+
 ## [1.0.1](https://github.com/wmarshall484/Keeper/compare/v1.0.0...v1.0.1) (2025-12-07)
 
 
