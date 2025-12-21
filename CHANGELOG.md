@@ -1,3 +1,10 @@
+## [1.0.4](https://github.com/wmarshall484/Keeper/compare/v1.0.3...v1.0.4) (2025-12-21)
+
+
+### Bug Fixes
+
+* electron must be a dev dependency. ([d9dfb08](https://github.com/wmarshall484/Keeper/commit/d9dfb087252a293dc4cbd00b500362f79e3ae6f2))
+
 ## [1.0.3](https://github.com/wmarshall484/Keeper/compare/v1.0.2...v1.0.3) (2025-12-20)
 
 
