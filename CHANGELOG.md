@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/wmarshall484/Keeper/compare/v1.0.4...v1.1.0) (2026-06-08)
+
+
+### Features
+
+* faster indexing, correct CODEOWNERS matching, dark UI, and multi-select ([e0f025d](https://github.com/wmarshall484/Keeper/commit/e0f025ddcf95b60264e9e8d763611684db456ea0))
+
 ## [1.0.4](https://github.com/wmarshall484/Keeper/compare/v1.0.3...v1.0.4) (2025-12-21)
 
 
