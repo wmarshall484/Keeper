@@ -5,13 +5,42 @@ window.addEventListener('DOMContentLoaded', async () => {
     let contextMenu = null;
     let editor = null;
     let editorReady = false;
-    let selectedFileItem = null;
+    let selectedIndices = new Set(); // indices into renderedItems that are selected
+    let anchorIndex = null;          // anchor for shift-range selection
+    let renderedItems = [];          // { el, file, filePath } in display order
+    let renderedDir = null; // Path of the directory currently shown in the file list.
+    const dirScrollPositions = new Map(); // Remembered scroll position per directory.
 
-    // Function to scroll editor to a specific line
+    // Decorations collection used to highlight the matched CODEOWNERS line.
+    let ruleHighlight = null;
+
+    // Wait briefly for the Monaco editor to finish loading. File clicks can
+    // fire before the (async) editor initialization completes; without this a
+    // click in that window would be silently dropped.
+    function waitForEditor(timeoutMs = 4000) {
+        return new Promise((resolve) => {
+            if (editor && editorReady) {
+                resolve(true);
+                return;
+            }
+            const start = Date.now();
+            const id = setInterval(() => {
+                if (editor && editorReady) {
+                    clearInterval(id);
+                    resolve(true);
+                } else if (Date.now() - start >= timeoutMs) {
+                    clearInterval(id);
+                    resolve(false);
+                }
+            }, 50);
+        });
+    }
+
+    // Function to scroll editor to (and highlight) the matching rule's line.
     async function scrollToRuleLine(filePath, isDirectory) {
         console.log('scrollToRuleLine called for:', filePath, 'isDirectory:', isDirectory);
 
-        if (!editor || !editorReady) {
+        if (!(await waitForEditor())) {
             console.log('Editor not ready yet');
             return;
         }
@@ -19,41 +48,59 @@ window.addEventListener('DOMContentLoaded', async () => {
         const ruleInfo = await window.electronAPI.getRuleInfo(filePath, isDirectory);
         console.log('Rule info received:', ruleInfo);
 
-        if (!ruleInfo) {
-            console.log('No rule info found for this file');
+        const model = editor.getModel();
+
+        if (!ruleInfo || !ruleInfo.lineNumber) {
+            // No matching rule — clear any previous highlight so the absence of
+            // a match is visually clear.
+            if (ruleHighlight) {
+                ruleHighlight.clear();
+            }
+            console.log('No matching rule for this item');
             return;
         }
 
-        if (ruleInfo && ruleInfo.lineNumber) {
-            console.log('Attempting to scroll to line:', ruleInfo.lineNumber);
-            try {
-                // Wait a tick to ensure editor is fully rendered
-                await new Promise(resolve => setTimeout(resolve, 0));
+        // Clamp to the buffer's current line count in case it was edited.
+        const lineNumber = model
+            ? Math.min(ruleInfo.lineNumber, model.getLineCount())
+            : ruleInfo.lineNumber;
 
-                // Scroll to the line and highlight it
-                editor.revealLineInCenter(ruleInfo.lineNumber);
-                editor.setPosition({ lineNumber: ruleInfo.lineNumber, column: 1 });
+        try {
+            editor.revealLineInCenter(lineNumber);
+            editor.setPosition({ lineNumber, column: 1 });
 
-                // Add selection to highlight the line
-                const model = editor.getModel();
-                if (model) {
-                    const lineContent = model.getLineContent(ruleInfo.lineNumber);
-                    editor.setSelection({
-                        startLineNumber: ruleInfo.lineNumber,
-                        startColumn: 1,
-                        endLineNumber: ruleInfo.lineNumber,
-                        endColumn: lineContent.length + 1
-                    });
-                }
-
-                // Focus the editor
-                editor.focus();
-                console.log('Successfully scrolled to line:', ruleInfo.lineNumber);
-            } catch (error) {
-                console.error('Error scrolling to line:', error);
+            // Whole-line highlight so the match is obvious even when the line is
+            // already on screen (a short CODEOWNERS file doesn't need to scroll,
+            // so a plain cursor move would be invisible).
+            const decoration = {
+                range: new monaco.Range(lineNumber, 1, lineNumber, 1),
+                options: { isWholeLine: true, className: 'keeper-rule-highlight' }
+            };
+            if (ruleHighlight) {
+                ruleHighlight.set([decoration]);
+            } else {
+                ruleHighlight = editor.createDecorationsCollection([decoration]);
             }
-        } else {
-            console.log('Rule found but no line number. Pattern:', ruleInfo.pattern, 'Owners:', ruleInfo.owners);
+
+            console.log('Highlighted rule line:', lineNumber);
+        } catch (error) {
+            console.error('Error highlighting rule line:', error);
+        }
+    }
+
+    // Reload the CODEOWNERS editor from disk (after an assign/remove/save),
+    // preserving the scroll/cursor position so the update isn't jarring.
+    async function reloadEditorContent() {
+        if (!editor) {
+            return;
+        }
+        const result = await window.electronAPI.getCodeownersContent();
+        if (result.success) {
+            const viewState = editor.saveViewState();
+            editor.setValue(result.content);
+            if (viewState) {
+                editor.restoreViewState(viewState);
+            }
         }
     }
 
@@ -69,14 +116,14 @@ window.addEventListener('DOMContentLoaded', async () => {
         // Show selection button
         fileList.innerHTML = `
             <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 20px;">
-                <div style="font-size: 18px; color: #666;">No repository selected</div>
+                <div style="font-size: 18px; color: #999;">No repository selected</div>
                 <button id="select-repo-button" style="
                     padding: 12px 24px;
                     font-size: 16px;
-                    background-color: #88ccee;
+                    background-color: #0e639c;
                     color: white;
                     border: none;
-                    border-radius: 6px;
+                    border-radius: 4px;
                     cursor: pointer;
                     transition: background-color 0.2s;
                 ">Select Repository</button>
@@ -85,10 +132,10 @@ window.addEventListener('DOMContentLoaded', async () => {
 
         const selectButton = document.getElementById('select-repo-button');
         selectButton.addEventListener('mouseenter', () => {
-            selectButton.style.backgroundColor = '#66aacc';
+            selectButton.style.backgroundColor = '#1177bb';
         });
         selectButton.addEventListener('mouseleave', () => {
-            selectButton.style.backgroundColor = '#88ccee';
+            selectButton.style.backgroundColor = '#0e639c';
         });
         selectButton.addEventListener('click', async () => {
             const result = await window.electronAPI.selectDirectory();
@@ -298,11 +345,68 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
-    async function showContextMenu(x, y, filePath, fileName, isDirectory) {
+    // Apply the .selected class to whichever rows are currently selected.
+    function updateSelectionStyles() {
+        renderedItems.forEach((item, i) => {
+            item.el.classList.toggle('selected', selectedIndices.has(i));
+        });
+    }
+
+    // The current selection as context-menu targets, in display order.
+    function selectedTargets() {
+        return [...selectedIndices].sort((a, b) => a - b).map(i => ({
+            filePath: renderedItems[i].filePath,
+            fileName: renderedItems[i].file.name,
+            isDirectory: renderedItems[i].file.isDirectory,
+        }));
+    }
+
+    // Left-click selection, with Cmd/Ctrl-click to toggle and Shift-click to
+    // range-select (standard file-manager behavior).
+    async function handleItemClick(index, e) {
+        const item = renderedItems[index];
+        if (e.metaKey || e.ctrlKey) {
+            if (selectedIndices.has(index)) selectedIndices.delete(index);
+            else selectedIndices.add(index);
+            anchorIndex = index;
+        } else if (e.shiftKey && anchorIndex !== null) {
+            selectedIndices = new Set();
+            const lo = Math.min(anchorIndex, index);
+            const hi = Math.max(anchorIndex, index);
+            for (let k = lo; k <= hi; k++) selectedIndices.add(k);
+        } else {
+            selectedIndices = new Set([index]);
+            anchorIndex = index;
+        }
+        updateSelectionStyles();
+        // Show the rule for the row just clicked.
+        await scrollToRuleLine(item.filePath, item.file.isDirectory);
+    }
+
+    async function handleItemContextMenu(index, e) {
+        e.preventDefault();
+        e.stopPropagation();
+        // Right-clicking outside the current selection selects just that row;
+        // right-clicking inside a multi-selection keeps the whole selection.
+        if (!selectedIndices.has(index)) {
+            selectedIndices = new Set([index]);
+            anchorIndex = index;
+            updateSelectionStyles();
+        }
+        const item = renderedItems[index];
+        await scrollToRuleLine(item.filePath, item.file.isDirectory);
+        await showContextMenu(e.pageX, e.pageY, selectedTargets());
+    }
+
+    async function showContextMenu(x, y, targets) {
         // Remove existing context menu if any
         if (contextMenu) {
             contextMenu.remove();
             contextMenu = null;
+        }
+
+        if (!targets || targets.length === 0) {
+            return;
         }
 
         const owners = await window.electronAPI.getAllOwners();
@@ -311,13 +415,44 @@ window.addEventListener('DOMContentLoaded', async () => {
             return; // No owners to assign
         }
 
+        // Refresh the file list, chart, and editor after a change, preserving
+        // the file-list scroll position.
+        const refreshAfter = async () => {
+            const scrollTop = fileList.scrollTop;
+            await renderAll();
+            await reloadEditorContent();
+            const last = targets[targets.length - 1];
+            await scrollToRuleLine(last.filePath, last.isDirectory);
+            fileList.scrollTop = scrollTop;
+        };
+        const assignAll = async (owner) => {
+            try {
+                await window.electronAPI.assignOwners(targets, owner);
+                await refreshAfter();
+            } catch (error) {
+                console.error('Failed to assign owner:', error);
+                alert('Failed to assign owner: ' + error.message);
+            }
+        };
+        const removeAll = async () => {
+            try {
+                await window.electronAPI.removeOwners(targets);
+                await refreshAfter();
+            } catch (error) {
+                console.error('Failed to remove owner:', error);
+                alert('Failed to remove owner: ' + error.message);
+            }
+        };
+
         // Create context menu
         contextMenu = document.createElement('div');
         contextMenu.className = 'context-menu';
 
         const header = document.createElement('div');
         header.className = 'context-menu-header';
-        header.textContent = `Assign owner to ${fileName}${isDirectory ? '/' : ''}`;
+        header.textContent = targets.length === 1
+            ? `Assign owner to ${targets[0].fileName}${targets[0].isDirectory ? '/' : ''}`
+            : `Assign owner to ${targets.length} items`;
         contextMenu.appendChild(header);
 
         owners.forEach(owner => {
@@ -326,25 +461,9 @@ window.addEventListener('DOMContentLoaded', async () => {
             item.textContent = owner;
             item.addEventListener('click', async (e) => {
                 e.stopPropagation();
-
-                // Remove context menu immediately
                 contextMenu.remove();
                 contextMenu = null;
-
-                try {
-                    // Save scroll position
-                    const scrollTop = fileList.scrollTop;
-
-                    await window.electronAPI.assignOwner(filePath, owner, isDirectory);
-                    // Refresh the view
-                    await renderAll();
-
-                    // Restore scroll position
-                    fileList.scrollTop = scrollTop;
-                } catch (error) {
-                    console.error('Failed to assign owner:', error);
-                    alert('Failed to assign owner: ' + error.message);
-                }
+                await assignAll(owner);
             });
             contextMenu.appendChild(item);
         });
@@ -370,21 +489,7 @@ window.addEventListener('DOMContentLoaded', async () => {
                     alert('Cannot use "<unset>" as an owner name. This is reserved for files without owners.');
                     return;
                 }
-
-                try {
-                    // Save scroll position
-                    const scrollTop = fileList.scrollTop;
-
-                    await window.electronAPI.assignOwner(filePath, newOwner, isDirectory);
-                    // Refresh the view
-                    await renderAll();
-
-                    // Restore scroll position
-                    fileList.scrollTop = scrollTop;
-                } catch (error) {
-                    console.error('Failed to assign owner:', error);
-                    alert('Failed to assign owner: ' + error.message);
-                }
+                await assignAll(newOwner);
             }
         });
         contextMenu.appendChild(addNewItem);
@@ -397,28 +502,12 @@ window.addEventListener('DOMContentLoaded', async () => {
         // Add "Remove owner" option
         const removeItem = document.createElement('div');
         removeItem.className = 'context-menu-item context-menu-item-remove';
-        removeItem.textContent = 'Remove owner';
+        removeItem.textContent = targets.length === 1 ? 'Remove owner' : 'Remove owner from all';
         removeItem.addEventListener('click', async (e) => {
             e.stopPropagation();
-
-            // Remove context menu immediately
             contextMenu.remove();
             contextMenu = null;
-
-            try {
-                // Save scroll position
-                const scrollTop = fileList.scrollTop;
-
-                await window.electronAPI.removeOwner(filePath, isDirectory);
-                // Refresh the view
-                await renderAll();
-
-                // Restore scroll position
-                fileList.scrollTop = scrollTop;
-            } catch (error) {
-                console.error('Failed to remove owner:', error);
-                alert('Failed to remove owner: ' + error.message);
-            }
+            await removeAll();
         });
         contextMenu.appendChild(removeItem);
 
@@ -617,7 +706,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     async function renderChart(codeownersFound) {
         if (!codeownersFound) {
-            chartContainer.innerHTML = '<p style="color: red; text-align: center;">CODEOWNERS file not found in the project root.</p>';
+            chartContainer.innerHTML = '<p style="color: #f48771; text-align: center;">CODEOWNERS file not found in the project root.</p>';
             return;
         }
 
@@ -629,8 +718,17 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
 
     async function renderFiles() {
+        // Remember where we were in the directory we're leaving, so the position
+        // can be restored when navigating back up to it (or after a save, which
+        // re-renders the same directory).
+        if (renderedDir !== null) {
+            dirScrollPositions.set(renderedDir, fileList.scrollTop);
+        }
+
         fileList.innerHTML = ''; // Clear the list
-        selectedFileItem = null; // Clear selection
+        selectedIndices = new Set(); // Clear selection
+        anchorIndex = null;
+        renderedItems = [];
 
         // Remove any lingering context menu
         if (contextMenu) {
@@ -640,13 +738,16 @@ window.addEventListener('DOMContentLoaded', async () => {
 
         const directory = await window.electronAPI.getDirectory();
         const files = await window.electronAPI.getFiles(directory);
+        renderedDir = directory;
 
         if (files.length === 0) {
             fileList.innerHTML = '<p>This directory is empty.</p>';
             return;
         }
 
-        files.forEach(file => {
+        const dirBase = directory.replace(/\/+$/, '');
+
+        files.forEach((file, index) => {
             const fileItem = document.createElement('div');
             fileItem.className = 'file-item';
 
@@ -680,59 +781,27 @@ window.addEventListener('DOMContentLoaded', async () => {
             }
             fileItem.appendChild(owner);
 
-            // Store file path for later use
-            const getFilePath = async () => await window.electronAPI.joinPath(directory, file.name);
+            const filePath = `${dirBase}/${file.name}`;
+            renderedItems.push({ el: fileItem, file, filePath });
 
-            // Add single-click handler to highlight and show rule
-            fileItem.addEventListener('click', async (e) => {
-                console.log('File item clicked. Calling scrollToRuleLine...');
-                const filePath = await getFilePath();
+            // Single-click selects (with Cmd/Ctrl/Shift modifiers for multi-select).
+            fileItem.addEventListener('click', (e) => handleItemClick(index, e));
 
-                // Remove previous selection
-                if (selectedFileItem) {
-                    selectedFileItem.classList.remove('selected');
-                }
-
-                // Highlight this item
-                fileItem.classList.add('selected');
-                selectedFileItem = fileItem;
-
-                // Scroll to the rule line in the editor
-                await scrollToRuleLine(filePath, file.isDirectory);
-            });
-
-            // Add double-click handler to navigate to directory
-            fileItem.addEventListener('dblclick', async (e) => {
+            // Double-click navigates into directories.
+            fileItem.addEventListener('dblclick', () => {
                 if (file.isDirectory) {
-                    const filePath = await getFilePath();
                     window.electronAPI.navigateTo(filePath);
                 }
             });
 
-            // Add right-click context menu
-            fileItem.addEventListener('contextmenu', async (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-
-                const filePath = await getFilePath();
-
-                // Remove previous selection
-                if (selectedFileItem) {
-                    selectedFileItem.classList.remove('selected');
-                }
-
-                // Highlight this item
-                fileItem.classList.add('selected');
-                selectedFileItem = fileItem;
-
-                // Scroll to rule line when right-clicking
-                await scrollToRuleLine(filePath, file.isDirectory);
-
-                await showContextMenu(e.pageX, e.pageY, filePath, file.name, file.isDirectory);
-            });
+            // Right-click opens the assign/remove menu for the selection.
+            fileItem.addEventListener('contextmenu', (e) => handleItemContextMenu(index, e));
 
             fileList.appendChild(fileItem);
         });
+
+        // Restore the saved scroll position for this directory (top on first visit).
+        fileList.scrollTop = dirScrollPositions.get(directory) || 0;
     }
 
     async function updateCurrentPath() {
@@ -766,14 +835,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     window.electronAPI.onDirectoryChanged(async () => {
         await renderAll();
-
-        // Reload editor content if editor is initialized
-        if (editor) {
-            const result = await window.electronAPI.getCodeownersContent();
-            if (result.success) {
-                editor.setValue(result.content);
-            }
-        }
+        await reloadEditorContent();
     });
 
     // Listen for incremental stats updates
@@ -801,19 +863,47 @@ window.addEventListener('DOMContentLoaded', async () => {
     require(['vs/editor/editor.main'], async function() {
         const editorContainer = document.getElementById('editor-container');
 
+        // Register a lightweight CODEOWNERS syntax: comments, owners, and glob
+        // wildcards. Owners use the same light-blue as the owner chips in the
+        // file list, for visual consistency.
+        if (!monaco.languages.getLanguages().some(l => l.id === 'codeowners')) {
+            monaco.languages.register({ id: 'codeowners' });
+            monaco.languages.setMonarchTokensProvider('codeowners', {
+                defaultToken: '',
+                tokenizer: {
+                    root: [
+                        [/#.*/, 'comment'],
+                        [/@[\w./-]+/, 'owner'],             // @user or @org/team
+                        [/[\w.+-]+@[\w.-]+\.\w+/, 'owner'], // email owners
+                        [/\*\*|\*|\?|\[[^\]]*\]/, 'glob'],  // glob wildcards
+                    ],
+                },
+            });
+            monaco.editor.defineTheme('codeowners-dark', {
+                base: 'vs-dark',
+                inherit: true,
+                rules: [
+                    { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
+                    { token: 'owner', foreground: '9CDCFE' },
+                    { token: 'glob', foreground: 'D7BA7D' },
+                ],
+                colors: {},
+            });
+        }
+
         // Get CODEOWNERS content
         const result = await window.electronAPI.getCodeownersContent();
 
         if (!result.success) {
-            editorContainer.innerHTML = `<div style="padding: 20px; color: red;">${result.error}</div>`;
+            editorContainer.innerHTML = `<div style="padding: 20px; color: #f48771;">${result.error}</div>`;
             return;
         }
 
         // Create Monaco Editor instance
         editor = monaco.editor.create(editorContainer, {
             value: result.content,
-            language: 'plaintext',
-            theme: 'vs',
+            language: 'codeowners',
+            theme: 'codeowners-dark',
             automaticLayout: true,
             lineNumbers: 'on',
             minimap: { enabled: false },

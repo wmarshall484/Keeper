@@ -47,6 +47,9 @@
     },
     "files": [
       "main.js",
+      "codeowners.js",
+      "gitignore.js",
+      "stats-worker.js",
       "preload.js",
       "renderer.js",
       "index.html",
@@ -57,8 +60,14 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": [
-        "dmg",
-        "zip"
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64", "arm64"]
+        }
       ],
       "icon": "build/icon.png"
     },

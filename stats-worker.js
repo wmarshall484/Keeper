@@ -1,115 +1,15 @@
 const { parentPort, workerData } = require('worker_threads');
 const fs = require('fs');
 const path = require('path');
-const { minimatch } = require('minimatch');
+const { compileRules, ownersFor } = require('./codeowners');
+const { compileIgnore, isIgnored } = require('./gitignore');
 
-// Worker receives: dirPath, codeowners, projectRoot, gitignorePatterns
-const { dirPath, codeowners, projectRoot, gitignorePatterns, codeownersTrie, complexPatterns } = workerData;
+// Worker receives: dirPath, codeowners (raw rules), projectRoot, gitignorePatterns
+const { dirPath, codeowners, projectRoot, gitignorePatterns } = workerData;
 
-// Recreate TrieNode class in worker
-class TrieNode {
-  constructor() {
-    this.children = new Map();
-    this.owners = null;
-    this.pattern = null;
-    this.priority = -1;
-  }
-}
-
-// Deserialize trie from plain objects
-function deserializeTrie(obj) {
-  const node = new TrieNode();
-  node.owners = obj.owners;
-  node.pattern = obj.pattern;
-  node.priority = obj.priority;
-
-  if (obj.children) {
-    for (const [key, childObj] of Object.entries(obj.children)) {
-      node.children.set(key, deserializeTrie(childObj));
-    }
-  }
-
-  return node;
-}
-
-// Search trie for matching owner
-function searchTrie(root, pathSegments) {
-  let node = root;
-  let bestMatch = null;
-  let bestPriority = -1;
-
-  for (const segment of pathSegments) {
-    if (!node.children.has(segment)) {
-      break;
-    }
-    node = node.children.get(segment);
-    if (node.owners && node.priority > bestPriority) {
-      bestMatch = node.owners;
-      bestPriority = node.priority;
-    }
-  }
-
-  return { owners: bestMatch, priority: bestPriority };
-}
-
-function isIgnored(filePath, baseDir, patterns) {
-  if (patterns.length === 0) {
-    return false;
-  }
-
-  let relativePath = path.relative(baseDir, filePath);
-
-  let ignored = false;
-  for (const { pattern, negate } of patterns) {
-    const matches = minimatch(relativePath, pattern, { dot: true }) ||
-                    minimatch(relativePath + '/', pattern, { dot: true }) ||
-                    minimatch(path.basename(filePath), pattern, { dot: true });
-
-    if (matches) {
-      ignored = !negate;
-    }
-  }
-
-  return ignored;
-}
-
-function getOwner(filePath, isDirectory, codeowners, baseDir, trie, complexPatternsArr) {
-  if (!codeowners) {
-    return '';
-  }
-
-  let relativePath = path.relative(baseDir, filePath);
-  if (isDirectory) {
-    relativePath += '/';
-  }
-
-  let bestOwners = null;
-  let bestPriority = -1;
-
-  // Check trie for simple patterns
-  if (trie) {
-    const segments = relativePath.split('/').filter(s => s !== '');
-    const trieResult = searchTrie(trie, segments);
-    if (trieResult.owners && trieResult.priority > bestPriority) {
-      bestOwners = trieResult.owners;
-      bestPriority = trieResult.priority;
-    }
-  }
-
-  // Check complex patterns
-  if (complexPatternsArr && complexPatternsArr.length > 0) {
-    for (const rule of complexPatternsArr) {
-      if (rule.pattern === '*' || minimatch(relativePath, rule.pattern, { dot: true })) {
-        if (rule.priority > bestPriority) {
-          bestOwners = rule.owners;
-          bestPriority = rule.priority;
-        }
-      }
-    }
-  }
-
-  return bestOwners ? bestOwners.join(' ') : '';
-}
+// Compile the gitignore patterns once for the whole walk (instead of
+// recompiling every glob on every entry).
+const compiledIgnore = compileIgnore(gitignorePatterns);
 
 function computeStats() {
   const { initialCache } = workerData;
@@ -120,8 +20,9 @@ function computeStats() {
   const progressCounts = {};
   let updateCounter = 0;
 
-  // Deserialize trie
-  const trie = codeownersTrie ? deserializeTrie(codeownersTrie) : null;
+  // Compile the CODEOWNERS rules once, using the shared matcher so the stats
+  // can never disagree with the file list or the editor highlight.
+  const compiled = compileRules(codeowners || []);
 
   function walk(currentDirPath) {
     // If the directory is already in the initial cache, use it and skip computation.
@@ -153,7 +54,7 @@ function computeStats() {
 
       const fullPath = path.join(currentDirPath, entry.name);
 
-      if (isIgnored(fullPath, projectRoot, gitignorePatterns)) {
+      if (isIgnored(fullPath, projectRoot, compiledIgnore)) {
         continue;
       }
 
@@ -175,8 +76,10 @@ function computeStats() {
         }
       } else {
         // For files, we find the owner(s) and increment the count for each one individually.
-        const ownerString = getOwner(fullPath, isDirectory, codeowners, projectRoot, trie, complexPatterns);
-        const owners = ownerString ? ownerString.split(' ') : ['<unset>'];
+        let owners = ownersFor(path.relative(projectRoot, fullPath), compiled);
+        if (!owners || owners.length === 0) {
+          owners = ['<unset>'];
+        }
 
         for (const owner of owners) {
           if (owner) { // Ensure owner is not an empty string from splitting
