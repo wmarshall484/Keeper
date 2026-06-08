@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAllOwners: () => ipcRenderer.invoke('get-all-owners'),
   assignOwner: (filePath, owner, isDirectory) => ipcRenderer.invoke('assign-owner', filePath, owner, isDirectory),
   removeOwner: (filePath, isDirectory) => ipcRenderer.invoke('remove-owner', filePath, isDirectory),
+  assignOwners: (targets, owner) => ipcRenderer.invoke('assign-owners', targets, owner),
+  removeOwners: (targets) => ipcRenderer.invoke('remove-owners', targets),
   joinPath: (...parts) => ipcRenderer.invoke('join-path', ...parts),
   getDebugInfo: () => ipcRenderer.invoke('get-debug-info'),
   needsDirectorySelection: () => ipcRenderer.invoke('needs-directory-selection'),

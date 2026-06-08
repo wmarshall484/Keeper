@@ -2,8 +2,16 @@ const { app, BrowserWindow, ipcMain, Menu, dialog, shell } = require('electron')
 const path = require('path');
 const process = require('process');
 const fs = require('fs');
-const { minimatch } = require('minimatch');
+const { compileIgnore, isIgnored } = require('./gitignore');
 const { Worker } = require('worker_threads');
+const {
+  parseCodeowners,
+  compileRules,
+  ruleFor,
+  ownersFor,
+  escapePattern,
+  linePattern,
+} = require('./codeowners');
 
 // Set the app name for macOS menu bar (must be before app.ready).
 if (process.platform === 'darwin') {
@@ -48,114 +56,24 @@ console.log('needsDirectorySelection:', needsDirectorySelection);
 let codeowners = null;
 let codeownersFound = false;
 let gitignorePatterns = [];
+let compiledIgnore = compileIgnore([]); // Precompiled gitignore matchers; kept in sync by findAndParseGitignore.
 let mainWindow;
 let ownerCache = new Map(); // Cache for file→owner lookups
-let codeownersTrie = null; // Trie for fast pattern matching
-let complexPatterns = []; // Patterns with wildcards that need minimatch
+let compiledRules = []; // Compiled CODEOWNERS matchers (see codeowners.js)
 let statsCache = new Map(); // Cache for directory→stats lookups
 let currentPrefetcher = null; // Current background prefetch operation
 let activeComputations = new Map(); // Track in-progress computations by directory path (stores Worker instances)
 let activeWorkers = new Map(); // Track active worker threads
-
-// TrieNode class for efficient path-based pattern matching
-class TrieNode {
-  constructor() {
-    this.children = new Map(); // path segment → TrieNode
-    this.owners = null; // owners at this node (if a rule matches here)
-    this.pattern = null; // original pattern for this node
-    this.priority = -1; // rule priority (higher = later in file = wins)
-  }
-}
-
-// Build trie from parsed CODEOWNERS rules
-function buildCodeownersTrie(rules) {
-  const root = new TrieNode();
-  const complex = [];
-
-  // Rules are already reversed (index 0 = last rule in original file)
-  // We assign priority where higher number = later in original file = wins
-  for (let i = 0; i < rules.length; i++) {
-    const rule = rules[i];
-    const priority = rules.length - i - 1; // Invert: index 0 gets highest priority
-    const pattern = rule.pattern;
-
-    // Check if pattern is "simple" (no wildcards except trailing /**)
-    const isSimple = !pattern.includes('*') && !pattern.includes('?') && !pattern.includes('[');
-    const isDirectoryPattern = pattern.endsWith('**');
-
-    if (isSimple || isDirectoryPattern) {
-      // Simple path-based pattern - add to trie
-      let cleanPattern = pattern;
-      if (cleanPattern.endsWith('**')) {
-        cleanPattern = cleanPattern.slice(0, -2); // Remove trailing **
-      }
-      if (cleanPattern.endsWith('/')) {
-        cleanPattern = cleanPattern.slice(0, -1); // Remove trailing /
-      }
-
-      const segments = cleanPattern.split('/').filter(s => s !== '');
-      let node = root;
-
-      for (const segment of segments) {
-        if (!node.children.has(segment)) {
-          node.children.set(segment, new TrieNode());
-        }
-        node = node.children.get(segment);
-      }
-
-      // Store owners and priority at this node
-      node.owners = rule.owners;
-      node.pattern = rule.pattern;
-      node.priority = priority;
-    } else {
-      // Complex pattern with wildcards - needs minimatch
-      complex.push({ ...rule, priority });
-    }
-  }
-
-  return { root, complex };
-}
-
-// Search trie for matching owner
-function searchTrie(root, pathSegments) {
-  let node = root;
-  let bestMatch = null;
-  let bestPriority = -1;
-
-  for (const segment of pathSegments) {
-    if (!node.children.has(segment)) {
-      break;
-    }
-    node = node.children.get(segment);
-    if (node.owners && node.priority > bestPriority) {
-      bestMatch = node.owners;
-      bestPriority = node.priority;
-    }
-  }
-
-  return { owners: bestMatch, priority: bestPriority };
-}
-
-// Serialize trie for passing to worker thread
-function serializeTrie(node) {
-  const obj = {
-    owners: node.owners,
-    pattern: node.pattern,
-    priority: node.priority,
-    children: {}
-  };
-
-  for (const [key, childNode] of node.children.entries()) {
-    obj.children[key] = serializeTrie(childNode);
-  }
-
-  return obj;
-}
+// Incremented whenever CODEOWNERS is (re)loaded. Stats workers capture the
+// generation they were started under and their results are discarded if it
+// changes underneath them, so a stale worker can never repopulate the cache.
+let codeownersGeneration = 0;
 
 function findAndParseGitignore(baseDir) {
   const gitignorePath = path.join(baseDir, '.gitignore');
 
   if (!fs.existsSync(gitignorePath)) {
+    compiledIgnore = compileIgnore([]);
     return [];
   }
 
@@ -172,29 +90,30 @@ function findAndParseGitignore(baseDir) {
       return { pattern, negate: false };
     });
 
+  compiledIgnore = compileIgnore(patterns);
   return patterns;
 }
 
-function isIgnored(filePath, baseDir, patterns) {
-  if (patterns.length === 0) {
-    return false;
+// Invalidate everything derived from the current CODEOWNERS: caches, in-flight
+// stats workers, and the background prefetch. Bumping the generation means any
+// worker messages that arrive after this point are ignored, so a stale worker
+// can never repopulate the cache with results computed against old rules.
+function invalidateCodeownersState() {
+  ownerCache.clear();
+  statsCache.clear();
+
+  if (currentPrefetcher) {
+    currentPrefetcher.cancelled = true;
   }
 
-  let relativePath = path.relative(baseDir, filePath);
-
-  // Check if any pattern matches
-  let ignored = false;
-  for (const { pattern, negate } of patterns) {
-    const matches = minimatch(relativePath, pattern, { dot: true }) ||
-                    minimatch(relativePath + '/', pattern, { dot: true }) ||
-                    minimatch(path.basename(filePath), pattern, { dot: true });
-
-    if (matches) {
-      ignored = !negate;
-    }
+  // Terminate all active worker threads since they're now stale
+  for (const [, worker] of activeWorkers.entries()) {
+    worker.terminate();
   }
+  activeWorkers.clear();
+  activeComputations.clear();
 
-  return ignored;
+  codeownersGeneration++;
 }
 
 function findAndParseCodeowners(baseDir) {
@@ -207,65 +126,20 @@ function findAndParseCodeowners(baseDir) {
   for (const p of possiblePaths) {
     if (fs.existsSync(p)) {
       const content = fs.readFileSync(p, 'utf-8');
-          const lines = content.split('\n');
-          const parsedWithLines = [];
-          for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            const trimmedLine = line.trim();
-            if (trimmedLine === '' || trimmedLine.startsWith('#')) {
-              continue;
-            }
-      
-            let [pattern, ...owners] = trimmedLine.split(/(?<!\\)\s+/);
-            if (pattern) {
-              pattern = pattern.replace(/\\ /g, ' ');
-            }
-            owners = owners.map(o => o.toLowerCase());
-      
-            if (pattern.startsWith('/')) {
-              pattern = pattern.substring(1);
-            }
-            if (pattern.endsWith('/')) {
-              pattern += '**';
-            }
-      
-            parsedWithLines.push({
-              pattern,
-              owners,
-              lineNumber: i + 1,
-              lineContent: trimmedLine
-            });
-          }
-          const parsed = parsedWithLines.reverse(); // Last match wins, so we reverse for easier iteration
+      const parsed = parseCodeowners(content);
 
+      invalidateCodeownersState();
       codeownersFound = true;
+      compiledRules = compileRules(parsed);
 
-      // Build trie and separate complex patterns for optimization
-      const { root, complex } = buildCodeownersTrie(parsed);
-      codeownersTrie = root;
-      complexPatterns = complex;
-
-      // Clear caches when CODEOWNERS is reloaded
-      ownerCache.clear();
-      statsCache.clear();
-
-      // Terminate all active worker threads since they're now stale
-      for (const [dir, worker] of activeWorkers.entries()) {
-        worker.terminate();
-      }
-      activeWorkers.clear();
-      activeComputations.clear();
-
-      console.log(`CODEOWNERS optimization: ${parsed.length - complex.length} simple patterns in trie, ${complex.length} complex patterns need minimatch`);
-
+      console.log(`CODEOWNERS loaded: ${parsed.length} rules from ${p}`);
       return parsed;
     }
   }
+
+  invalidateCodeownersState();
   codeownersFound = false;
-  codeownersTrie = null;
-  complexPatterns = [];
-  ownerCache.clear();
-  statsCache.clear();
+  compiledRules = [];
   return null;
 }
 
@@ -278,22 +152,29 @@ function computeOwnershipStatsAsync(dirPath, onProgress = null) {
       codeowners,
       projectRoot,
       gitignorePatterns,
-      codeownersTrie: codeownersTrie ? serializeTrie(codeownersTrie) : null,
-      complexPatterns,
       initialCache: Object.fromEntries(statsCache), // Pass current cache
     };
 
+    // Capture the CODEOWNERS generation this worker is computing against. If it
+    // changes (file reloaded / repo switched) before the worker reports back,
+    // its results are stale and must be discarded.
+    const generation = codeownersGeneration;
     const worker = new Worker(path.join(__dirname, 'stats-worker.js'), { workerData });
 
     activeWorkers.set(dirPath, worker);
 
     worker.on('message', (msg) => {
+      const stale = generation !== codeownersGeneration;
+
       if (msg.type === 'progress') {
-        if (onProgress) {
+        if (onProgress && !stale) {
           onProgress(msg.data);
         }
       } else if (msg.type === 'partial-result') {
         // A subdirectory's computation is complete, cache it immediately.
+        if (stale) {
+          return;
+        }
         const { dir, stats } = msg.data;
         if (!statsCache.has(dir)) {
           const total = Object.values(stats).reduce((sum, count) => sum + count, 0);
@@ -309,26 +190,28 @@ function computeOwnershipStatsAsync(dirPath, onProgress = null) {
           }
         }
       } else if (msg.type === 'complete') {
-        // Main computation is complete, cache all results
-        const allDirCountsObj = msg.data;
-        for (const [dir, ownerCounts] of Object.entries(allDirCountsObj)) {
-          if (!statsCache.has(dir)) { // Check again in case a partial result was already set
-            const total = Object.values(ownerCounts).reduce((sum, count) => sum + count, 0);
-            if (total === 0) {
-              statsCache.set(dir, []);
-            } else {
-              const percentages = Object.entries(ownerCounts).map(([owner, count]) => ({
-                owner,
-                percentage: (count / total) * 100,
-                count
-              }));
-              statsCache.set(dir, percentages);
+        // Main computation is complete, cache all results (unless stale).
+        if (!stale) {
+          const allDirCountsObj = msg.data;
+          for (const [dir, ownerCounts] of Object.entries(allDirCountsObj)) {
+            if (!statsCache.has(dir)) { // Check again in case a partial result was already set
+              const total = Object.values(ownerCounts).reduce((sum, count) => sum + count, 0);
+              if (total === 0) {
+                statsCache.set(dir, []);
+              } else {
+                const percentages = Object.entries(ownerCounts).map(([owner, count]) => ({
+                  owner,
+                  percentage: (count / total) * 100,
+                  count
+                }));
+                statsCache.set(dir, percentages);
+              }
             }
           }
         }
 
         activeWorkers.delete(dirPath);
-        resolve(statsCache.get(dirPath) || []);
+        resolve(stale ? [] : (statsCache.get(dirPath) || []));
       } else if (msg.type === 'error') {
         activeWorkers.delete(dirPath);
         reject(new Error(msg.error));
@@ -376,7 +259,7 @@ async function startBackgroundPrefetch(startDir) {
       for (const entry of entries) {
         if (entry.isDirectory() && !ignoredDirs.includes(entry.name)) {
           const fullPath = path.join(dir, entry.name);
-          if (!isIgnored(fullPath, projectRoot, gitignorePatterns)) {
+          if (!isIgnored(fullPath, projectRoot, compiledIgnore)) {
             queue.push(fullPath);
           }
         }
@@ -470,36 +353,8 @@ function getOwner(filePath, isDirectory, codeowners, baseDir) {
         return ownerCache.get(cacheKey);
     }
 
-    let relativePath = path.relative(baseDir, filePath);
-    if (isDirectory) {
-        relativePath += '/';
-    }
-
-    let bestOwners = null;
-    let bestPriority = -1;
-
-    // Check trie for simple patterns
-    if (codeownersTrie) {
-        const segments = relativePath.split('/').filter(s => s !== '');
-        const trieResult = searchTrie(codeownersTrie, segments);
-        if (trieResult.owners && trieResult.priority > bestPriority) {
-            bestOwners = trieResult.owners;
-            bestPriority = trieResult.priority;
-        }
-    }
-
-    // Check complex patterns - must check ALL to find highest priority match
-    if (complexPatterns.length > 0) {
-        for (const rule of complexPatterns) {
-            if (rule.pattern === '*' || minimatch(relativePath, rule.pattern, { dot: true })) {
-                if (rule.priority > bestPriority) {
-                    bestOwners = rule.owners;
-                    bestPriority = rule.priority;
-                }
-            }
-        }
-    }
-
+    const relativePath = path.relative(baseDir, filePath);
+    const bestOwners = ownersFor(relativePath, compiledRules);
     const result = bestOwners ? bestOwners.join(' ') : '';
 
     // Store in cache
@@ -635,12 +490,16 @@ app.whenReady().then(() => {
       return null;
     }
 
-    let relativePath = path.relative(projectRoot, filePath);
-    if (isDirectory) {
-      relativePath += '/';
+    const relativePath = path.relative(projectRoot, filePath);
+
+    // Use the exact same matcher that drives the file list and stats, so the
+    // highlighted rule always corresponds to the displayed owner.
+    const rule = ruleFor(relativePath, compiledRules);
+    if (!rule) {
+      return null;
     }
 
-    // Find the codeowners file path once, so we can return it
+    // Find the codeowners file path so the renderer can show/scroll it.
     const possiblePaths = [
       path.join(projectRoot, 'CODEOWNERS'),
       path.join(projectRoot, '.github', 'CODEOWNERS'),
@@ -648,29 +507,16 @@ app.whenReady().then(() => {
     ];
     const codeownersPath = possiblePaths.find(p => fs.existsSync(p));
 
-
-    // Find which rule matches this file
-    // Remember codeowners array is reversed, so first match wins
-    for (const rule of codeowners) {
-      let matches = (rule.pattern === '*') || minimatch(relativePath, rule.pattern, { dot: true });
-
-      // If pattern is a directory (no wildcards, no trailing **), also check if file is inside it
-      if (!matches && !rule.pattern.includes('*') && !rule.pattern.includes('?')) {
-        matches = relativePath.startsWith(rule.pattern + '/');
-      }
-
-      if (matches) {
-        // We found the rule, and it already has the line number!
-        return {
-          ...rule, // contains pattern, owners, lineNumber, lineContent
-          filePath: codeownersPath,
-          relativePath: codeownersPath ? path.relative(projectRoot, codeownersPath) : null
-        };
-      }
-    }
-
-    // No matching rule found
-    return null;
+    // Return a plain object (compiled rules carry Minimatch instances that
+    // can't be cloned across the IPC boundary).
+    return {
+      pattern: rule.pattern,
+      owners: rule.owners,
+      lineNumber: rule.lineNumber,
+      lineContent: rule.lineContent,
+      filePath: codeownersPath,
+      relativePath: codeownersPath ? path.relative(projectRoot, codeownersPath) : null,
+    };
   });
 
   ipcMain.handle('get-codeowners-content', () => {
@@ -740,26 +586,31 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('open-file-in-editor', async (event, filePath, lineNumber) => {
-    const { exec } = require('child_process');
+    const { execFile } = require('child_process');
     const util = require('util');
-    const execPromise = util.promisify(exec);
+    const execFilePromise = util.promisify(execFile);
 
-    // Try common editors with line number support
+    // Sanitize the line number to a plain integer; never let it flow into a
+    // command unchecked.
+    const line = Number.isInteger(lineNumber) && lineNumber > 0 ? lineNumber : 1;
+
+    // Try common editors with line number support. Arguments are passed as an
+    // array via execFile (no shell), so paths with spaces or shell
+    // metacharacters can't be interpreted as commands.
     const editors = [
-      { cmd: 'code', args: (f, l) => `code -g "${f}:${l}"` }, // VS Code
-      { cmd: 'code-insiders', args: (f, l) => `code-insiders -g "${f}:${l}"` },
-      { cmd: 'subl', args: (f, l) => `subl "${f}:${l}"` }, // Sublime Text
-      { cmd: 'atom', args: (f, l) => `atom "${f}:${l}"` }, // Atom
-      { cmd: 'nova', args: (f, l) => `nova "${f}:${l}"` }, // Nova
+      { cmd: 'code', args: (f, l) => ['-g', `${f}:${l}`] }, // VS Code
+      { cmd: 'code-insiders', args: (f, l) => ['-g', `${f}:${l}`] },
+      { cmd: 'subl', args: (f, l) => [`${f}:${l}`] }, // Sublime Text
+      { cmd: 'atom', args: (f, l) => [`${f}:${l}`] }, // Atom
+      { cmd: 'nova', args: (f, l) => [`${f}:${l}`] }, // Nova
     ];
 
     // Try each editor
     for (const editor of editors) {
       try {
-        await execPromise(`which ${editor.cmd}`);
+        await execFilePromise('which', [editor.cmd]);
         // Editor found, open the file
-        const cmd = editor.args(filePath, lineNumber);
-        await execPromise(cmd);
+        await execFilePromise(editor.cmd, editor.args(filePath, line));
         return { success: true, editor: editor.cmd };
       } catch (err) {
         // Editor not found, try next
@@ -864,32 +715,24 @@ app.whenReady().then(() => {
     let content = fs.readFileSync(codeownersPath, 'utf-8');
     const lines = content.split('\n');
 
-    // Remove any existing rule for this exact path
-    const filteredLines = lines.filter((line, i) => {
+    // Remove any existing rule for this exact path (escape-aware comparison,
+    // mirroring how the parser reads patterns).
+    const filteredLines = lines.filter((line) => {
       const trimmed = line.trim();
       if (trimmed === '' || trimmed.startsWith('#')) return true;
-
-      const [existingPattern] = trimmed.split(/\s+/);
-      let normalizedPattern = existingPattern;
-      if (normalizedPattern.startsWith('/')) {
-        normalizedPattern = normalizedPattern.substring(1);
-      }
-
-      // Keep the line if it doesn't match our path
-      return normalizedPattern !== relativePath;
+      return linePattern(line) !== relativePath;
     });
 
-    // Add new rule at the end
-    const newRule = `${relativePath} ${owner}`;
-    if (content.endsWith('\n') || filteredLines[filteredLines.length - 1] === '') {
-      filteredLines.push(newRule);
-    } else {
-      filteredLines.push('');
-      filteredLines.push(newRule);
+    // Drop a single trailing blank line (artifact of a trailing newline) so the
+    // append is deterministic, then add the new rule with spaces escaped so it
+    // round-trips through the parser.
+    if (filteredLines.length > 0 && filteredLines[filteredLines.length - 1] === '') {
+      filteredLines.pop();
     }
+    filteredLines.push(`${escapePattern(relativePath)} ${owner}`);
 
-    // Write back to file
-    fs.writeFileSync(codeownersPath, filteredLines.join('\n'), 'utf-8');
+    // Write back to file (always newline-terminated).
+    fs.writeFileSync(codeownersPath, filteredLines.join('\n') + '\n', 'utf-8');
 
     // Reload codeowners (this also clears caches)
     codeowners = findAndParseCodeowners(projectRoot);
@@ -928,19 +771,11 @@ app.whenReady().then(() => {
     let content = fs.readFileSync(codeownersPath, 'utf-8');
     const lines = content.split('\n');
 
-    // Find and remove the matching rule
-    const newLines = lines.filter((line, i) => {
+    // Find and remove the matching rule (escape-aware comparison).
+    const newLines = lines.filter((line) => {
       const trimmed = line.trim();
       if (trimmed === '' || trimmed.startsWith('#')) return true;
-
-      const [existingPattern] = trimmed.split(/\s+/);
-      let normalizedPattern = existingPattern;
-      if (normalizedPattern.startsWith('/')) {
-        normalizedPattern = normalizedPattern.substring(1);
-      }
-
-      // Keep the line if it doesn't match
-      return normalizedPattern !== relativePath;
+      return linePattern(line) !== relativePath;
     });
 
     // Write back to file
@@ -952,6 +787,79 @@ app.whenReady().then(() => {
     return { success: true };
   });
   
+  // Assign a single owner to many paths in one read-modify-write (used by
+  // multi-select). `targets` is [{ filePath, isDirectory }].
+  ipcMain.handle('assign-owners', async (event, targets, owner) => {
+    const possiblePaths = [
+      path.join(projectRoot, 'CODEOWNERS'),
+      path.join(projectRoot, '.github', 'CODEOWNERS'),
+      path.join(projectRoot, 'docs', 'CODEOWNERS'),
+    ];
+    const codeownersPath = possiblePaths.find(p => fs.existsSync(p));
+    if (!codeownersPath) {
+      throw new Error('CODEOWNERS file not found');
+    }
+
+    const relPaths = targets.map(t => {
+      let rel = path.relative(projectRoot, t.filePath);
+      if (t.isDirectory && !rel.endsWith('/')) rel += '/';
+      return rel;
+    });
+    const relSet = new Set(relPaths);
+
+    let lines = fs.readFileSync(codeownersPath, 'utf-8').split('\n');
+
+    // Remove any existing rule for any of these exact paths (escape-aware).
+    lines = lines.filter((line) => {
+      const trimmed = line.trim();
+      if (trimmed === '' || trimmed.startsWith('#')) return true;
+      return !relSet.has(linePattern(line));
+    });
+
+    // Drop a trailing blank line, then append one rule per target.
+    if (lines.length > 0 && lines[lines.length - 1] === '') {
+      lines.pop();
+    }
+    for (const rel of relPaths) {
+      lines.push(`${escapePattern(rel)} ${owner}`);
+    }
+
+    fs.writeFileSync(codeownersPath, lines.join('\n') + '\n', 'utf-8');
+    codeowners = findAndParseCodeowners(projectRoot);
+
+    return { success: true };
+  });
+
+  ipcMain.handle('remove-owners', async (event, targets) => {
+    const possiblePaths = [
+      path.join(projectRoot, 'CODEOWNERS'),
+      path.join(projectRoot, '.github', 'CODEOWNERS'),
+      path.join(projectRoot, 'docs', 'CODEOWNERS'),
+    ];
+    const codeownersPath = possiblePaths.find(p => fs.existsSync(p));
+    if (!codeownersPath) {
+      throw new Error('CODEOWNERS file not found');
+    }
+
+    const relSet = new Set(targets.map(t => {
+      let rel = path.relative(projectRoot, t.filePath);
+      if (t.isDirectory && !rel.endsWith('/')) rel += '/';
+      return rel;
+    }));
+
+    const lines = fs.readFileSync(codeownersPath, 'utf-8').split('\n');
+    const newLines = lines.filter((line) => {
+      const trimmed = line.trim();
+      if (trimmed === '' || trimmed.startsWith('#')) return true;
+      return !relSet.has(linePattern(line));
+    });
+
+    fs.writeFileSync(codeownersPath, newLines.join('\n'), 'utf-8');
+    codeowners = findAndParseCodeowners(projectRoot);
+
+    return { success: true };
+  });
+
   ipcMain.handle('get-ownership-stats', async (event, dirPath) => {
     if (!codeownersFound) {
         return [];
@@ -1029,18 +937,35 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('get-files', (event, dirPath) => {
+    // Keep the file browser consistent with the stats computation (and the
+    // README's "respects .gitignore" promise): hide VCS/dependency dirs and
+    // anything gitignored.
+    const ignoredDirs = ['.git', 'node_modules'];
     try {
       const files = fs.readdirSync(dirPath);
-      return files.map(file => {
+      const result = [];
+      for (const file of files) {
+        if (ignoredDirs.includes(file)) {
+          continue;
+        }
         const filePath = path.join(dirPath, file);
-        const stats = fs.statSync(filePath);
-        const isDirectory = stats.isDirectory();
-        return {
+        if (isIgnored(filePath, projectRoot, compiledIgnore)) {
+          continue;
+        }
+        let isDirectory;
+        try {
+          isDirectory = fs.statSync(filePath).isDirectory();
+        } catch (err) {
+          // Skip entries we can't stat (e.g. broken symlinks).
+          continue;
+        }
+        result.push({
           name: file,
-          isDirectory: isDirectory,
+          isDirectory,
           owner: getOwner(filePath, isDirectory, codeowners, projectRoot),
-        };
-      });
+        });
+      }
+      return result;
     } catch (error) {
       console.error('Error reading directory:', error);
       return [];
