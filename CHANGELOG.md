@@ -1,3 +1,17 @@
+# [1.2.0](https://github.com/wmarshall484/Keeper/compare/v1.1.0...v1.2.0) (2026-06-09)
+
+
+### Bug Fixes
+
+* a dir/** rule also marks its directory as owned ([89b52f3](https://github.com/wmarshall484/Keeper/commit/89b52f3da1000b06a0060ae50575e45afcc96a74))
+
+
+### Features
+
+* add read-only file preview pane with toggleable stats ([b4618db](https://github.com/wmarshall484/Keeper/commit/b4618db63d45d3ac2484f36439d77667436ebec2))
+* assign owners via multi-select checkboxes; Enter applies ([8a8ab1d](https://github.com/wmarshall484/Keeper/commit/8a8ab1dac1fdcd968c82e00f0a6a2cb368da145f))
+* show hidden directories and add "Ruby files only" filter ([553b47a](https://github.com/wmarshall484/Keeper/commit/553b47a4f81839db710253c77ee2367dfb72267c))
+
 # [1.1.0](https://github.com/wmarshall484/Keeper/compare/v1.0.4...v1.1.0) (2026-06-08)
 
 
