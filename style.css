@@ -454,3 +454,28 @@ html, body {
     background-color: rgba(220, 220, 170, 0.18);
     box-shadow: inset 3px 0 0 #dcdcaa;
 }
+
+/* Right-pane footer (e.g. the "Ruby files only" toggle), lower-right. */
+.right-pane-footer {
+    flex-shrink: 0;
+    display: flex;
+    justify-content: flex-end;
+    padding: 6px 12px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-panel);
+}
+
+.ruby-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+}
+
+.ruby-toggle input {
+    cursor: pointer;
+    accent-color: var(--accent);
+}

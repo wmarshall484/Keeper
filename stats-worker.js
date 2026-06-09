@@ -5,11 +5,17 @@ const { compileRules, ownersFor } = require('./codeowners');
 const { compileIgnore, isIgnored } = require('./gitignore');
 
 // Worker receives: dirPath, codeowners (raw rules), projectRoot, gitignorePatterns
-const { dirPath, codeowners, projectRoot, gitignorePatterns } = workerData;
+const { dirPath, codeowners, projectRoot, gitignorePatterns, rubyOnly } = workerData;
 
 // Compile the gitignore patterns once for the whole walk (instead of
 // recompiling every glob on every entry).
 const compiledIgnore = compileIgnore(gitignorePatterns);
+
+// Whether a filename is a Ruby source file (for the "Ruby files only" filter).
+function isRubyFile(name) {
+  return /\.(rb|rake|gemspec|ru)$/i.test(name) ||
+    ['Rakefile', 'Gemfile', 'Guardfile', 'Capfile'].includes(name);
+}
 
 function computeStats() {
   const { initialCache } = workerData;
@@ -76,6 +82,7 @@ function computeStats() {
         }
       } else {
         // For files, we find the owner(s) and increment the count for each one individually.
+        if (rubyOnly && !isRubyFile(entry.name)) continue; // skip non-Ruby files when filtered
         let owners = ownersFor(path.relative(projectRoot, fullPath), compiled);
         if (!owners || owners.length === 0) {
           owners = ['<unset>'];

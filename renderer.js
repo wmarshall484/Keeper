@@ -833,6 +833,17 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     await renderAll();
 
+    // "Ruby files only" toggle — re-index (Ruby files only) and re-filter the
+    // file navigator. The main process invalidates stats + restarts indexing.
+    const rubyOnlyCheckbox = document.getElementById('ruby-only-checkbox');
+    if (rubyOnlyCheckbox) {
+        rubyOnlyCheckbox.checked = await window.electronAPI.getRubyOnly();
+        rubyOnlyCheckbox.addEventListener('change', async () => {
+            await window.electronAPI.setRubyOnly(rubyOnlyCheckbox.checked);
+            await renderAll();
+        });
+    }
+
     window.electronAPI.onDirectoryChanged(async () => {
         await renderAll();
         await reloadEditorContent();

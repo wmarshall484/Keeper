@@ -68,6 +68,7 @@ let activeWorkers = new Map(); // Track active worker threads
 // generation they were started under and their results are discarded if it
 // changes underneath them, so a stale worker can never repopulate the cache.
 let codeownersGeneration = 0;
+let rubyOnly = false; // "Ruby files only" filter: restrict navigator + stats to Ruby files.
 
 function findAndParseGitignore(baseDir) {
   const gitignorePath = path.join(baseDir, '.gitignore');
@@ -152,6 +153,7 @@ function computeOwnershipStatsAsync(dirPath, onProgress = null) {
       codeowners,
       projectRoot,
       gitignorePatterns,
+      rubyOnly, // when true, the worker counts only Ruby files
       initialCache: Object.fromEntries(statsCache), // Pass current cache
     };
 
@@ -361,6 +363,33 @@ function getOwner(filePath, isDirectory, codeowners, baseDir) {
     ownerCache.set(cacheKey, result);
 
     return result;
+}
+
+// Whether a filename is a Ruby source file (used by the "Ruby files only" filter).
+function isRubyFile(name) {
+    return /\.(rb|rake|gemspec|ru)$/i.test(name) ||
+        ['Rakefile', 'Gemfile', 'Guardfile', 'Capfile'].includes(name);
+}
+
+// Whether a directory contains a Ruby file anywhere beneath it (early-exit).
+function directoryHasRubyFile(dir) {
+    let entries;
+    try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+        return false;
+    }
+    for (const entry of entries) {
+        if (entry.name === '.git' || entry.name === 'node_modules') continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+            if (!entry.name.startsWith('.') && isIgnored(full, projectRoot, compiledIgnore)) continue;
+            if (directoryHasRubyFile(full)) return true;
+        } else if (isRubyFile(entry.name)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 function createMenu() {
@@ -936,10 +965,25 @@ app.whenReady().then(() => {
     }
   });
 
+  ipcMain.handle('set-ruby-only', (event, value) => {
+    rubyOnly = !!value;
+    // The filter changes both stats counts and which files show, so invalidate
+    // cached stats + in-flight workers and re-run the background index.
+    invalidateCodeownersState();
+    if (codeownersFound && currentDirectory) {
+      startBackgroundPrefetch(currentDirectory).catch(err => {
+        console.error('Ruby-only prefetch error:', err);
+      });
+    }
+    return { success: true };
+  });
+
+  ipcMain.handle('get-ruby-only', () => rubyOnly);
+
   ipcMain.handle('get-files', (event, dirPath) => {
-    // Keep the file browser consistent with the stats computation (and the
-    // README's "respects .gitignore" promise): hide VCS/dependency dirs and
-    // anything gitignored.
+    // Hide VCS/dependency dirs and gitignored entries, but always show hidden
+    // (dot) directories like .github / .circleci so the repo's config dirs stay
+    // browsable even when they're gitignored.
     const ignoredDirs = ['.git', 'node_modules'];
     try {
       const files = fs.readdirSync(dirPath);
@@ -949,15 +993,26 @@ app.whenReady().then(() => {
           continue;
         }
         const filePath = path.join(dirPath, file);
-        if (isIgnored(filePath, projectRoot, compiledIgnore)) {
-          continue;
-        }
         let isDirectory;
         try {
           isDirectory = fs.statSync(filePath).isDirectory();
         } catch (err) {
           // Skip entries we can't stat (e.g. broken symlinks).
           continue;
+        }
+        // Dot-directories are always shown; everything else respects .gitignore.
+        const isHiddenDir = isDirectory && file.startsWith('.');
+        if (!isHiddenDir && isIgnored(filePath, projectRoot, compiledIgnore)) {
+          continue;
+        }
+        // When the "Ruby files only" filter is on, show only Ruby files and the
+        // directories that (recursively) contain at least one Ruby file.
+        if (rubyOnly) {
+          if (isDirectory) {
+            if (!directoryHasRubyFile(filePath)) continue;
+          } else if (!isRubyFile(file)) {
+            continue;
+          }
         }
         result.push({
           name: file,
