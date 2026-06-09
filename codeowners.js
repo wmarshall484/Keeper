@@ -78,7 +78,15 @@ function patternToGlobs(pattern) {
   const lastIsWildcard = /[*?[\]]/.test(lastSegment);
   const ownsContents = dirOnly || !lastIsWildcard;
 
-  return ownsContents ? [base, `${base}/**`] : [base];
+  const globs = ownsContents ? [base, `${base}/**`] : [base];
+
+  // A pattern ending in "/**" should also own the directory entry itself, so
+  // `dir/** @team` marks the `dir` folder as owned just like `dir/ @team`.
+  if (base.endsWith('/**')) {
+    globs.push(base.slice(0, -3));
+  }
+
+  return globs;
 }
 
 // Literal (wildcard-free) path segments of a pattern. A path can only match a
