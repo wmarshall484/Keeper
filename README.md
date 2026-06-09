@@ -41,7 +41,3 @@ for `CODEOWNERS` in `/`, `/.github/`, or `/docs/`.
 - **Accurate & fast** — `.gitignore`-aware, with correct `CODEOWNERS` glob
   matching (including `dir/**`) and an indexed matcher tuned for large repos.
 - **Dark, VS Code-style interface.**
-
-## License
-
-MIT
