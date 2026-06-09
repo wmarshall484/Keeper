@@ -4,6 +4,9 @@ A desktop app for viewing and editing GitHub `CODEOWNERS` files — browse a
 repository, see who owns each file and directory, edit ownership visually, and
 preview file contents, all in one window.
 
+<img width="1728" height="1117" alt="image" src="https://github.com/user-attachments/assets/e94b75e8-6654-47ac-a67a-26a2e604a393" />
+
+
 ## Installation
 
 **From source**
