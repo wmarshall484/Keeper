@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeOwners: (targets) => ipcRenderer.invoke('remove-owners', targets),
   setRubyOnly: (value) => ipcRenderer.invoke('set-ruby-only', value),
   getRubyOnly: () => ipcRenderer.invoke('get-ruby-only'),
+  getFileContent: (filePath) => ipcRenderer.invoke('get-file-content', filePath),
   joinPath: (...parts) => ipcRenderer.invoke('join-path', ...parts),
   getDebugInfo: () => ipcRenderer.invoke('get-debug-info'),
   needsDirectorySelection: () => ipcRenderer.invoke('needs-directory-selection'),

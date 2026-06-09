@@ -5,6 +5,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     let contextMenu = null;
     let editor = null;
     let editorReady = false;
+    let codeViewer = null;      // read-only preview editor (right pane)
+    let codeViewerReady = false;
     let selectedIndices = new Set(); // indices into renderedItems that are selected
     let anchorIndex = null;          // anchor for shift-range selection
     let renderedItems = [];          // { el, file, filePath } in display order
@@ -101,6 +103,52 @@ window.addEventListener('DOMContentLoaded', async () => {
             if (viewState) {
                 editor.restoreViewState(viewState);
             }
+        }
+    }
+
+    // Show a clicked file's contents in the read-only preview editor (right pane).
+    async function showFilePreview(filePath, fileName, isDirectory) {
+        if (!codeViewer || !codeViewerReady) {
+            return;
+        }
+        const previewHeader = document.getElementById('preview-header');
+        if (isDirectory) {
+            if (previewHeader) previewHeader.textContent = `${fileName}/`;
+            setPreviewContent('', null);
+            return;
+        }
+        const result = await window.electronAPI.getFileContent(filePath);
+        if (!result.success) {
+            if (previewHeader) previewHeader.textContent = `${fileName} — ${result.error}`;
+            setPreviewContent('', null);
+            return;
+        }
+        if (previewHeader) previewHeader.textContent = fileName;
+        setPreviewContent(result.content, filePath);
+    }
+
+    // Swap the preview editor's model. Using a file URI lets Monaco infer the
+    // language (syntax highlighting) from the extension.
+    function setPreviewContent(content, filePath) {
+        if (!codeViewer) {
+            return;
+        }
+        const prev = codeViewer.getModel();
+        let model;
+        if (filePath) {
+            const uri = monaco.Uri.file(filePath);
+            model = monaco.editor.getModel(uri);
+            if (model) {
+                model.setValue(content);
+            } else {
+                model = monaco.editor.createModel(content, undefined, uri);
+            }
+        } else {
+            model = monaco.editor.createModel(content || '', 'plaintext');
+        }
+        codeViewer.setModel(model);
+        if (prev && prev !== model) {
+            prev.dispose();
         }
     }
 
@@ -379,8 +427,9 @@ window.addEventListener('DOMContentLoaded', async () => {
             anchorIndex = index;
         }
         updateSelectionStyles();
-        // Show the rule for the row just clicked.
+        // Show the rule for the row just clicked, and preview its contents.
         await scrollToRuleLine(item.filePath, item.file.isDirectory);
+        await showFilePreview(item.filePath, item.file.name, item.file.isDirectory);
     }
 
     async function handleItemContextMenu(index, e) {
@@ -844,6 +893,16 @@ window.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    // Toggle the ownership-stats chart; when hidden, the preview fills the pane.
+    const toggleStatsBtn = document.getElementById('toggle-stats-btn');
+    const rightPane = document.querySelector('.right-pane');
+    if (toggleStatsBtn && rightPane) {
+        toggleStatsBtn.addEventListener('click', () => {
+            const hidden = rightPane.classList.toggle('stats-hidden');
+            toggleStatsBtn.textContent = hidden ? 'Show' : 'Hide';
+        });
+    }
+
     window.electronAPI.onDirectoryChanged(async () => {
         await renderAll();
         await reloadEditorContent();
@@ -939,5 +998,23 @@ window.addEventListener('DOMContentLoaded', async () => {
                 console.log('CODEOWNERS file saved successfully');
             }
         });
+
+        // Create the read-only preview editor in the right pane.
+        const codeViewerContainer = document.getElementById('code-viewer');
+        if (codeViewerContainer) {
+            codeViewer = monaco.editor.create(codeViewerContainer, {
+                value: '',
+                language: 'plaintext',
+                theme: 'vs-dark',
+                readOnly: true,
+                automaticLayout: true,
+                lineNumbers: 'on',
+                minimap: { enabled: false },
+                scrollBeyondLastLine: false,
+                fontSize: 12,
+                wordWrap: 'off'
+            });
+            codeViewerReady = true;
+        }
     });
 });

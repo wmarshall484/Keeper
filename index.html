@@ -26,8 +26,13 @@
         </div>
         <div class="resize-handle" id="resize-handle-2"></div>
         <div class="right-pane">
-            <h2>Ownership Stats</h2>
+            <div class="stats-header">
+                <h2>Ownership Stats</h2>
+                <button id="toggle-stats-btn" class="pane-toggle-btn">Hide</button>
+            </div>
             <div id="chart-container"></div>
+            <div class="preview-header" id="preview-header">No file selected</div>
+            <div id="code-viewer"></div>
             <div class="right-pane-footer">
                 <label class="ruby-toggle"><input type="checkbox" id="ruby-only-checkbox"> Ruby files only</label>
             </div>

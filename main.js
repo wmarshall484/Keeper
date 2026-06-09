@@ -980,6 +980,26 @@ app.whenReady().then(() => {
 
   ipcMain.handle('get-ruby-only', () => rubyOnly);
 
+  // Read a file's text for the read-only preview pane.
+  ipcMain.handle('get-file-content', (event, filePath) => {
+    try {
+      const stat = fs.statSync(filePath);
+      if (stat.isDirectory()) {
+        return { success: false, error: 'Directory' };
+      }
+      if (stat.size > 2 * 1024 * 1024) {
+        return { success: false, error: 'File too large to preview' };
+      }
+      const buf = fs.readFileSync(filePath);
+      if (buf.includes(0)) { // NUL byte → treat as binary
+        return { success: false, error: 'Binary file' };
+      }
+      return { success: true, content: buf.toString('utf-8') };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('get-files', (event, dirPath) => {
     // Hide VCS/dependency dirs and gitignored entries, but always show hidden
     // (dot) directories like .github / .circleci so the repo's config dirs stay
