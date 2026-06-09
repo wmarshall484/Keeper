@@ -818,7 +818,7 @@ app.whenReady().then(() => {
   
   // Assign a single owner to many paths in one read-modify-write (used by
   // multi-select). `targets` is [{ filePath, isDirectory }].
-  ipcMain.handle('assign-owners', async (event, targets, owner) => {
+  ipcMain.handle('assign-owners', async (event, targets, owners) => {
     const possiblePaths = [
       path.join(projectRoot, 'CODEOWNERS'),
       path.join(projectRoot, '.github', 'CODEOWNERS'),
@@ -828,6 +828,10 @@ app.whenReady().then(() => {
     if (!codeownersPath) {
       throw new Error('CODEOWNERS file not found');
     }
+
+    // `owners` may be a single owner (legacy) or a list of teams. Empty means
+    // "unassign" (remove the rule).
+    const ownerStr = (Array.isArray(owners) ? owners : [owners]).filter(Boolean).join(' ');
 
     const relPaths = targets.map(t => {
       let rel = path.relative(projectRoot, t.filePath);
@@ -845,12 +849,14 @@ app.whenReady().then(() => {
       return !relSet.has(linePattern(line));
     });
 
-    // Drop a trailing blank line, then append one rule per target.
-    if (lines.length > 0 && lines[lines.length - 1] === '') {
-      lines.pop();
-    }
-    for (const rel of relPaths) {
-      lines.push(`${escapePattern(rel)} ${owner}`);
+    // Append one rule (with all chosen teams) per target, unless unassigning.
+    if (ownerStr) {
+      if (lines.length > 0 && lines[lines.length - 1] === '') {
+        lines.pop();
+      }
+      for (const rel of relPaths) {
+        lines.push(`${escapePattern(rel)} ${ownerStr}`);
+      }
     }
 
     fs.writeFileSync(codeownersPath, lines.join('\n') + '\n', 'utf-8');

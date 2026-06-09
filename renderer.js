@@ -406,6 +406,7 @@ window.addEventListener('DOMContentLoaded', async () => {
             filePath: renderedItems[i].filePath,
             fileName: renderedItems[i].file.name,
             isDirectory: renderedItems[i].file.isDirectory,
+            owners: renderedItems[i].file.owner || '',
         }));
     }
 
@@ -474,13 +475,13 @@ window.addEventListener('DOMContentLoaded', async () => {
             await scrollToRuleLine(last.filePath, last.isDirectory);
             fileList.scrollTop = scrollTop;
         };
-        const assignAll = async (owner) => {
+        const assignAll = async (chosen) => {
             try {
-                await window.electronAPI.assignOwners(targets, owner);
+                await window.electronAPI.assignOwners(targets, chosen);
                 await refreshAfter();
             } catch (error) {
-                console.error('Failed to assign owner:', error);
-                alert('Failed to assign owner: ' + error.message);
+                console.error('Failed to assign owners:', error);
+                alert('Failed to assign owners: ' + error.message);
             }
         };
         const removeAll = async () => {
@@ -493,67 +494,103 @@ window.addEventListener('DOMContentLoaded', async () => {
             }
         };
 
-        // Create context menu
+        // Create context menu. Clicks inside keep it open so multiple teams can
+        // be toggled; only the actions below close it.
         contextMenu = document.createElement('div');
         contextMenu.className = 'context-menu';
+        contextMenu.tabIndex = -1; // focusable so it can handle Enter/Escape
+        contextMenu.addEventListener('click', (e) => e.stopPropagation());
 
         const header = document.createElement('div');
         header.className = 'context-menu-header';
         header.textContent = targets.length === 1
-            ? `Assign owner to ${targets[0].fileName}${targets[0].isDirectory ? '/' : ''}`
-            : `Assign owner to ${targets.length} items`;
+            ? `Owners of ${targets[0].fileName}${targets[0].isDirectory ? '/' : ''}`
+            : `Owners of ${targets.length} items`;
         contextMenu.appendChild(header);
 
-        owners.forEach(owner => {
-            const item = document.createElement('div');
-            item.className = 'context-menu-item';
-            item.textContent = owner;
-            item.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                contextMenu.remove();
-                contextMenu = null;
-                await assignAll(owner);
-            });
-            contextMenu.appendChild(item);
-        });
+        // Pre-check the teams currently assigned to every target.
+        const ownerSets = targets.map(t => new Set((t.owners || '').split(' ').filter(Boolean)));
+        const checkedSet = new Set(
+            ownerSets.length ? [...ownerSets[0]].filter(o => ownerSets.every(s => s.has(o))) : []
+        );
+        const ownerList = Array.from(new Set([...owners, ...checkedSet])).sort();
 
-        // Add separator
+        const checkList = document.createElement('div');
+        checkList.className = 'context-menu-checklist';
+        contextMenu.appendChild(checkList);
+
+        const checkboxes = [];
+        const addOwnerCheckbox = (owner) => {
+            const label = document.createElement('label');
+            label.className = 'context-menu-item context-menu-checkbox';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = checkedSet.has(owner);
+            cb.value = owner;
+            const span = document.createElement('span');
+            span.textContent = owner;
+            label.appendChild(cb);
+            label.appendChild(span);
+            checkList.appendChild(label);
+            checkboxes.push(cb);
+        };
+        ownerList.forEach(addOwnerCheckbox);
+
         const separator1 = document.createElement('div');
         separator1.className = 'context-menu-separator';
         contextMenu.appendChild(separator1);
 
-        // Add "Add new owner" option
+        // "Add new team…" applies the currently-checked teams plus the new one.
         const addNewItem = document.createElement('div');
         addNewItem.className = 'context-menu-item';
-        addNewItem.textContent = 'Add new owner...';
-        addNewItem.addEventListener('click', async (e) => {
-            e.stopPropagation();
+        addNewItem.textContent = 'Add new team…';
+        addNewItem.addEventListener('click', async () => {
+            const current = checkboxes.filter(cb => cb.checked).map(cb => cb.value);
             contextMenu.remove();
             contextMenu = null;
-
             const newOwner = await showCustomPrompt();
-            if (newOwner && newOwner !== '') {
-                // Prevent adding <unset> as an owner
-                if (newOwner === '<unset>') {
-                    alert('Cannot use "<unset>" as an owner name. This is reserved for files without owners.');
-                    return;
-                }
-                await assignAll(newOwner);
+            if (!newOwner || newOwner === '') return;
+            if (newOwner === '<unset>') {
+                alert('Cannot use "<unset>" as an owner name. This is reserved for files without owners.');
+                return;
             }
+            await assignAll([...new Set([...current, newOwner])]);
         });
         contextMenu.appendChild(addNewItem);
 
-        // Add separator
         const separator2 = document.createElement('div');
         separator2.className = 'context-menu-separator';
         contextMenu.appendChild(separator2);
 
-        // Add "Remove owner" option
+        // Apply the checked teams to the target(s). Triggered by the button or
+        // by pressing Enter while the menu is open.
+        const applyChecked = async () => {
+            const chosen = checkboxes.filter(cb => cb.checked).map(cb => cb.value);
+            contextMenu.remove();
+            contextMenu = null;
+            await assignAll(chosen);
+        };
+        const applyItem = document.createElement('div');
+        applyItem.className = 'context-menu-item context-menu-apply';
+        applyItem.textContent = 'Apply';
+        applyItem.addEventListener('click', applyChecked);
+        contextMenu.appendChild(applyItem);
+
+        contextMenu.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                applyChecked();
+            } else if (e.key === 'Escape') {
+                contextMenu.remove();
+                contextMenu = null;
+            }
+        });
+
+        // Quick unassign (clear all owners from the target(s)).
         const removeItem = document.createElement('div');
         removeItem.className = 'context-menu-item context-menu-item-remove';
-        removeItem.textContent = targets.length === 1 ? 'Remove owner' : 'Remove owner from all';
-        removeItem.addEventListener('click', async (e) => {
-            e.stopPropagation();
+        removeItem.textContent = targets.length === 1 ? 'Remove all owners' : 'Remove from all';
+        removeItem.addEventListener('click', async () => {
             contextMenu.remove();
             contextMenu = null;
             await removeAll();
@@ -592,6 +629,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         contextMenu.style.left = finalX + 'px';
         contextMenu.style.top = finalY + 'px';
         contextMenu.style.visibility = 'visible';
+        contextMenu.focus(); // so Enter applies without needing to click first
     }
 
     let chartLabelWidth = 150; // Default width

@@ -384,6 +384,7 @@ html, body {
     min-width: 200px;
     z-index: 1000;
     padding: 4px 0;
+    outline: none;
 }
 
 .context-menu-header {
@@ -411,6 +412,29 @@ html, body {
 
 .context-menu-item-remove { color: var(--danger); }
 .context-menu-item-remove:hover { background-color: #5a1d1d; }
+
+/* Checkbox owner list (assign to multiple teams) */
+.context-menu-checklist {
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.context-menu-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.context-menu-checkbox input {
+    accent-color: var(--accent);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.context-menu-apply {
+    color: var(--accent);
+    font-weight: 600;
+}
 
 .hint-text {
     padding: 6px 12px;
